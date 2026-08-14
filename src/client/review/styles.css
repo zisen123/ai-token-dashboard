@@ -126,10 +126,15 @@ body::before {
   font-weight: 500;
   color: var(--ink-2);
 }
-.brand-dot {
-  width: 7px; height: 7px;
+.review-brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  box-sizing: border-box;
+  padding: 2px;
+  border-radius: 7px;
   background: var(--ink);
-  border-radius: 50%;
 }
 .brand-name {
   font-weight: 600;

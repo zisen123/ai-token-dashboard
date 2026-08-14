@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { U } from '../shared/utils.js';
 import { ThemeToggle } from '../shared/ThemeToggle.jsx';
+import tokenStudioFlow from '../assets/token-studio-flow.png';
 import claudeIcon from './icons/claude.svg';
 import gptIcon from './icons/gpt.svg';
 import { sourceIcon, sourceIconScale } from './source-icons.js';
@@ -163,7 +164,7 @@ function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collec
     <div className="topbar">
       <div className="topbar-left">
         <div className="brand">
-          <div className="brand-mark">TS</div>
+          <img className="dashboard-brand-mark" src={tokenStudioFlow} alt="Token Studio" />
           <div>
             <h1>Token Studio</h1>
             <p className="brand-sub">个人 AI Token 消耗看板</p>

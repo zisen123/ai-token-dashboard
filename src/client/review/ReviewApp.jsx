@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { U } from '../shared/utils.js';
 import { RU } from './utils.js';
 import { ThemeToggle } from '../shared/ThemeToggle.jsx';
+import tokenStudioFlow from '../assets/token-studio-flow.png';
 import { HeroSection, ProjectSection, CalendarSection } from './sections-1.jsx';
 import { ToolsSection, EfficiencySection, InsightsSection } from './sections-2.jsx';
 import './styles.css';
@@ -151,7 +152,7 @@ function ReviewDashboard({ rawData }) {
       <nav className="review-nav">
         <div className="review-nav-inner">
           <div className="brand-line">
-            <span className="brand-dot"/>
+            <img className="review-brand-mark" src={tokenStudioFlow} alt="Token Studio" />
             <span className="brand-name">Token Studio</span>
             <div className="page-switch">
               <a href="/" className="page-chip">看板</a>
