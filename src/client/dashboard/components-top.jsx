@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { U } from '../shared/utils.js';
 import { ThemeToggle } from '../shared/ThemeToggle.jsx';
+import { quotaWindowLabel, orderQuotaWindows } from '../shared/quota.js';
 import tokenStudioFlow from '../assets/token-studio-flow.png';
 import claudeIcon from './icons/claude.svg';
 import gptIcon from './icons/gpt.svg';
@@ -15,13 +16,6 @@ const QUOTA_TOOL_ICON = { Claude: claudeIcon, Codex: gptIcon };
 // ───────────────────────────────────────────────────────────────
 // Subscription-window quota bars (live, from /api/quota)
 // ───────────────────────────────────────────────────────────────
-const QUOTA_WINDOW_LABEL = {
-  five_hour: '5 小时',
-  seven_day: '7 天',
-  seven_day_opus: '7 天 · Opus',
-  seven_day_sonnet: '7 天 · Sonnet'
-};
-
 function quotaResetText(iso) {
   if (!iso) return '';
   const ms = new Date(iso).getTime() - Date.now();
@@ -35,15 +29,13 @@ function quotaResetText(iso) {
   return `${m}m 后重置`;
 }
 
-const QUOTA_WINDOW_ORDER = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
-
 function QuotaWindowRow({ window }) {
   const pct = Math.round((window.utilization || 0) * 100);
   const tone = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
   return (
     <div className="quota-row">
       <div className="quota-row-head">
-        <span className="quota-win">{QUOTA_WINDOW_LABEL[window.name] || window.name}</span>
+        <span className="quota-win">{quotaWindowLabel(window.name)}</span>
         <span className="quota-reset">{quotaResetText(window.resetsAt)}</span>
         <span className="quota-pct">{pct}%</span>
       </div>
@@ -91,9 +83,7 @@ function quotaAccountRows(account) {
 function QuotaItem({ tool, windows, error, account }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const ordered = (windows || []).slice().sort(
-    (a, b) => QUOTA_WINDOW_ORDER.indexOf(a.name) - QUOTA_WINDOW_ORDER.indexOf(b.name)
-  ).slice(0, 2);
+  const ordered = orderQuotaWindows(windows).slice(0, 2);
   const hasDetail = !!(account && (account.email || account.plan)) || ordered.length > 0;
 
   // Close the detail popover when clicking anywhere outside the card.
@@ -128,7 +118,7 @@ function QuotaItem({ tool, windows, error, account }) {
           {ordered.length > 0 && <div className="quota-detail-sep" />}
           {ordered.map(w => (
             <div className="quota-detail-row" key={w.name}>
-              <span>{QUOTA_WINDOW_LABEL[w.name] || w.name}重置</span>
+              <span>{quotaWindowLabel(w.name)}重置</span>
               <b>{quotaResetAbs(w.resetsAt)}</b>
             </div>
           ))}
