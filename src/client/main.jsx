@@ -18,3 +18,17 @@ createRoot(document.getElementById('root')).render(
     <Root />
   </ThemeProvider>
 );
+
+// PWA: register the service worker (HTTPS only) and reload exactly once when
+// a new worker takes control, so a redeploy lands on open tabs automatically.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}

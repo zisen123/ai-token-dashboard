@@ -1,0 +1,17 @@
+{
+  "name": "Token Studio · AI Token Dashboard",
+  "short_name": "Token Studio",
+  "description": "个人 AI Token 消耗看板",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#1c1a2e",
+  "icons": [
+    {
+      "src": "/token-studio-flow-favicon.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}

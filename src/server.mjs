@@ -1,7 +1,8 @@
 import './load-env.mjs';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { extname, join, resolve, sep } from 'node:path';
 import { URL } from 'node:url';
 import {
@@ -27,6 +28,13 @@ const port = Number(process.env.PORT || 4173);
 const staticDir = existsSync(resolve(process.cwd(), 'dist'))
   ? resolve(process.cwd(), 'dist')
   : resolve(process.cwd(), 'public');
+
+// Optional TLS: when a cert/key pair is present the server upgrades to HTTPS,
+// which is required for the PWA service worker (secure context only). The
+// files are gitignored; deployments without them keep plain HTTP.
+const tlsCertFile = process.env.TLS_CERT_FILE || resolve(process.cwd(), 'certs', 'server.crt');
+const tlsKeyFile = process.env.TLS_KEY_FILE || resolve(process.cwd(), 'certs', 'server.key');
+const tlsEnabled = existsSync(tlsCertFile) && existsSync(tlsKeyFile);
 const db = await openDb();
 const as = (name) => db.driver === 'mysql' ? `\`${name}\`` : `"${name}"`;
 // Pricing data for serve-time cache-savings estimation. Same bundled cache
@@ -43,13 +51,19 @@ let collectionState = {
   stderr: ''
 };
 
-const server = createServer((req, res) => {
+const requestHandler = (req, res) => {
   handleRequest(req, res).catch((error) => {
     console.error(error);
     if (!res.headersSent) sendJson(res, { error: 'Internal server error' }, 500);
     else res.end();
   });
-});
+};
+const server = tlsEnabled
+  ? createHttpsServer({
+      cert: readFileSync(tlsCertFile),
+      key: readFileSync(tlsKeyFile)
+    }, requestHandler)
+  : createServer(requestHandler);
 
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -61,7 +75,7 @@ async function handleRequest(req, res) {
 }
 
 server.listen(port, () => {
-  console.log(`AI Token Dashboard: http://localhost:${port}`);
+  console.log(`AI Token Dashboard: ${tlsEnabled ? 'https' : 'http'}://localhost:${port}`);
   startScheduledCollect();
 });
 
@@ -432,7 +446,13 @@ function serveStatic(pathname, res) {
     res.end('Not found');
     return;
   }
-  res.writeHead(200, { 'content-type': contentType(filePath) });
+  const headers = { 'content-type': contentType(filePath) };
+  if (['/', '/index.html', '/review', '/sw.js', '/manifest.webmanifest'].includes(decoded)) {
+    headers['cache-control'] = 'no-cache';
+  } else if (decoded.startsWith('/assets/')) {
+    headers['cache-control'] = 'public, max-age=31536000, immutable';
+  }
+  res.writeHead(200, headers);
   createReadStream(filePath).pipe(res);
 }
 
