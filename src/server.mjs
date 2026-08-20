@@ -12,6 +12,7 @@ import { batchUpsertDaily, batchUpsertSession, batchUpsertTimeUsage } from './db
 import { loadCollectorConfig } from './collector-config.mjs';
 import { calculateCacheSavings, loadPricing } from './pricing.mjs';
 import { queryQuota } from './quota.mjs';
+import { querySophnet } from './sophnet.mjs';
 
 // Live subscription-window quota is the one feature that makes outbound calls
 // (to the vendors' usage endpoints, using the OAuth token the CLIs stored
@@ -200,6 +201,11 @@ async function handleApi(req, url, res) {
     await handleQuota(res);
     return;
   }
+  if (url.pathname === '/api/sophnet') {
+    const force = url.searchParams.get('refresh') === '1';
+    sendJson(res, await querySophnet({ force }));
+    return;
+  }
   if (url.pathname === '/api/ingest' && req.method === 'POST') {
     await handleIngest(req, res);
     return;
@@ -216,13 +222,15 @@ async function handleApi(req, url, res) {
 }
 
 function handleCollect(req, res) {
-  // The socket must be loopback AND the request must not have transited a proxy.
-  // Behind a reverse proxy every request's socket is loopback, so the proxy
-  // headers are what actually reveal a remote origin — reject if any are present.
+  // The socket must be loopback or a private LAN address, AND the request must
+  // not have transited a proxy. Behind a reverse proxy every request's socket
+  // is loopback, so the proxy headers are what actually reveal a remote origin
+  // — reject if any are present. This deployment intentionally serves the
+  // dashboard on the LAN, so private-range peers may trigger a collection.
   const proxied = ['x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded']
     .some(header => req.headers[header]);
-  if (!isLoopback(req.socket.remoteAddress) || proxied) {
-    sendJson(res, { error: '采集接口仅允许本机访问' }, 403);
+  if (!isAllowedCollectOrigin(req.socket.remoteAddress) || proxied) {
+    sendJson(res, { error: '采集接口仅允许本机或内网访问' }, 403);
     return;
   }
 
@@ -447,6 +455,26 @@ function isLoopback(address = '') {
     || address === '::1'
     || address === '::ffff:127.0.0.1'
     || address === 'localhost';
+}
+
+// Loopback plus RFC1918/link-local ranges. IPv6-mapped IPv4 peers show up as
+// ::ffff:a.b.c.d, so unwrap those before the range checks.
+function isAllowedCollectOrigin(address = '') {
+  if (isLoopback(address)) return true;
+  let ip = String(address);
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip.includes(':')) {
+    // IPv6: link-local fe80::/10 and unique-local fc00::/7 count as private.
+    const lower = ip.toLowerCase();
+    return lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd');
+  }
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  return a === 10
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254);
 }
 
 function readJson(req) {

@@ -63,7 +63,10 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
   const series = [];
   const palette = sources.map(s => U.getSourceColor(s));
   const stableBarState = {
-    emphasis: { focus: 'none', itemStyle: { opacity: 1 } },
+    // ECharts 6 cannot interpolate oklch() color strings when restyling bars
+    // for the hover state, which renders the hovered column invisible. The
+    // axis tooltip does not need per-item restyling, so disable emphasis.
+    emphasis: { disabled: true },
     blur: { itemStyle: { opacity: 1 } },
     select: { itemStyle: { opacity: 1 } }
   };

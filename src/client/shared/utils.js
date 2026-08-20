@@ -61,11 +61,9 @@ function compact(v) {
 }
 
 function compactCN(v) {
-  if (v == null) return '—';
-  const a = Math.abs(v);
-  if (a >= 1e8) return (v / 1e8).toFixed(2).replace(/\.?0+$/, '') + ' 亿';
-  if (a >= 1e4) return (v / 1e4).toFixed(1).replace(/\.0$/, '') + ' 万';
-  return fmt.format(v);
+  // Thousands-based units (K/M/B) — same scale as `compact`, kept as a
+  // separate name so existing call sites stay readable.
+  return compact(v);
 }
 
 function pct(num, den) {

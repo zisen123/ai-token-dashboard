@@ -1014,6 +1014,175 @@ button, input, select { font-family: inherit; color: inherit; }
   -webkit-mask-image: linear-gradient(to top, black 30%, transparent 100%);
 }
 
+/* ─── Sophnet platform block ──────────────────────────────── */
+
+.sophnet-block {
+  margin: 0 0 20px;
+}
+
+.sophnet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.sophnet-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sophnet-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sophnet-alert {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in oklab, var(--bad), transparent 68%);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--bad), transparent 91%);
+  color: var(--bad);
+  font-size: 12.5px;
+}
+
+.sophnet-alert.warn {
+  border-color: color-mix(in oklab, var(--c-amber), transparent 62%);
+  background: color-mix(in oklab, var(--c-amber), transparent 90%);
+  color: var(--warn-text);
+}
+
+.sophnet-kpis {
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sophnet-kpis .kpi {
+  padding: 12px 14px 14px;
+}
+
+.sophnet-kpis .kpi-value { font-size: 20px; }
+
+.kpi-bad { border-color: color-mix(in oklab, var(--bad), transparent 62%); }
+
+.sophnet-tab-count {
+  opacity: 0.5;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sophnet-footnote { margin: 10px 0 0; }
+
+/* The trend panel stretches with the grid row (its height follows the donut
+   panel beside it); the chart inside fills whatever space is left after the
+   header, so there is no dead area under the plot. */
+.sophnet-trend-cell > .panel { height: 100%; display: flex; flex-direction: column; }
+
+/* Sophnet tab tables: show about six rows and scroll for the rest. Row height
+   is ~33px (7px padding + 12.5px line + border), so 6 rows ≈ 240px + header. */
+.sophnet-block .table-wrap {
+  max-height: 281px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: var(--good);
+}
+
+.health-dot.warn { background: var(--c-amber); }
+.health-dot.bad { background: var(--bad); }
+
+.sophnet-catalog {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.sophnet-vendor-cloud {
+  display: flex;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.sophnet-vendor-cloud span,
+.sophnet-vendor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.sophnet-vendor-chip:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.sophnet-vendor-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  color: var(--c-indigo);
+}
+
+.sophnet-vendor-cloud b,
+.sophnet-vendor-chip b {
+  color: var(--c-indigo);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sophnet-raw {
+  display: grid;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.sophnet-raw > div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.sophnet-raw span { color: var(--muted); }
+.sophnet-raw b { overflow-wrap: anywhere; font-weight: 500; }
+.sophnet-raw p { margin: 4px 0 0; color: var(--muted); }
+
+@media (max-width: 1100px) {
+  .sophnet-kpis { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .sophnet-kpis { grid-template-columns: repeat(2, 1fr); }
+  .sophnet-catalog { grid-template-columns: 1fr; }
+  .sophnet-vendor-cloud { max-height: 120px; }
+}
+
 /* ─── Grid ────────────────────────────────────────────────── */
 
 .grid {
@@ -1923,8 +2092,22 @@ table.dt tbody tr.selected { background: var(--accent-soft); }
 /* responsive — small fallback */
 @media (max-width: 1180px) {
   .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .sophnet-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sophnet-panel-wide,
+  .sophnet-panel-narrow { grid-column: span 12; }
+  .sophnet-daily-chart { grid-template-columns: minmax(0, 1fr); }
+  .sophnet-catalog { grid-template-columns: minmax(0, 1fr); }
   .col-8 { grid-column: span 12; }
   .col-4 { grid-column: span 12; }
   .col-6 { grid-column: span 12; }
   .col-3 { grid-column: span 12; }
+}
+
+@media (max-width: 720px) {
+  .section-heading { flex-direction: column; }
+  .sophnet-kpis { grid-template-columns: minmax(0, 1fr); }
+  .sophnet-bars { grid-template-columns: repeat(30, minmax(6px, 1fr)); gap: 2px; }
+  .sophnet-day span { display: none; }
+  .sophnet-day-summary > div { grid-template-columns: 44px 1fr; }
+  .sophnet-day-summary small { display: none; }
 }

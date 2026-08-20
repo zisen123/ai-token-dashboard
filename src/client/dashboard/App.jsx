@@ -7,6 +7,7 @@ import { U } from '../shared/utils.js';
 import { Topbar, FilterBar, KPI } from './components-top.jsx';
 import { TrendChart, SourceDonut, TopModels, Gauge, GrowthPanel, Heatmap } from './components-charts.jsx';
 import { TablePanel, DrillDrawer } from './components-tables.jsx';
+import { SophnetPanel } from './SophnetPanel.jsx';
 import './styles.css';
 
 const EMPTY_TIME = [];   // stable reference so memoized selectors don't churn
@@ -23,6 +24,9 @@ export function App() {
   const [hourlyRows, setHourlyRows] = useState(null);
   const [hourlyError, setHourlyError] = useState(null);
   const [quota, setQuota] = useState(null);         // live subscription-window quota
+  const [sophnet, setSophnet] = useState(null);
+  const [sophnetLoading, setSophnetLoading] = useState(false);
+  const [sophnetError, setSophnetError] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [collecting, setCollecting] = useState(false);
@@ -67,10 +71,22 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  const loadSophnet = useCallback((options = {}) => {
+    setSophnetLoading(true);
+    setSophnetError(null);
+    const suffix = options.force ? '?refresh=1' : '';
+    return fetch(`/api/sophnet${suffix}`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(data => setSophnet(data))
+      .catch(err => setSophnetError(err.message || 'Sophnet 数据加载失败'))
+      .finally(() => setSophnetLoading(false));
+  }, []);
+
   const loadData = useCallback(() => {
     setRefreshing(true);
     loadQuota();
     loadHourly();
+    loadSophnet();
     fetch('/api/data')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -96,7 +112,9 @@ export function App() {
       })
       .catch(err => setLoadError(err.message))
       .finally(() => setRefreshing(false));
-  }, [loadHourly, loadTime, loadQuota]);
+  }, [loadHourly, loadTime, loadQuota, loadSophnet]);
+
+  const refreshSophnet = useCallback(() => loadSophnet({ force: true }), [loadSophnet]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -207,8 +225,12 @@ export function App() {
       collecting={collecting}
       collectStatus={collectStatus}
       quota={quota}
+      sophnet={sophnet}
+      sophnetLoading={sophnetLoading}
+      sophnetError={sophnetError}
       onRefresh={loadData}
       onCollect={runCollect}
+      onRefreshSophnet={refreshSophnet}
       onNeedTime={ensureTime} />
   );
 }
@@ -216,7 +238,7 @@ export function App() {
 /* =============================================================
    Dashboard (extracted so App stays clean)
    ============================================================= */
-function Dashboard({ M, refreshing, collecting, collectStatus, quota, onRefresh, onCollect, onNeedTime }) {
+function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, sophnetLoading, sophnetError, onRefresh, onCollect, onRefreshSophnet, onNeedTime }) {
   // ───── Filter state ─────
   const [filters, setFilters] = useState(() => ({
     rangeId: '30d',
@@ -448,6 +470,14 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, onRefresh,
           delta={U.deltaPct(totals.costUSD, compareData.totals?.costUSD)}
           sparkValues={sparkBy('costUSD')} sparkColor="oklch(0.72 0.14 75)" />
       </div>
+
+      <SophnetPanel
+        data={sophnet}
+        loading={sophnetLoading}
+        error={sophnetError}
+        startDate={filters.startDate}
+        endDate={filters.endDate}
+        onRefresh={onRefreshSophnet} />
 
       {/* Charts grid */}
       <div className="grid">
