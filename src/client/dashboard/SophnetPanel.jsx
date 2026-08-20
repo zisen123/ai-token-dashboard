@@ -521,9 +521,11 @@ function SophnetTrendChart({ rows, vendorRows, totals }) {
         let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
         html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${U.compactCN(totalTokens)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500"> tokens</span></div>`;
         html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${fmtCny(cost)}</div>`;
-        for (const p of params) {
-          if (p.seriesName === '7 日均线') continue;
-          if (!p.value) continue;
+        // Highest-token vendors first so the tooltip reads like a ranking.
+        const rows = params
+          .filter(p => p.seriesName !== '7 日均线' && p.value)
+          .sort((a, b) => (b.value || 0) - (a.value || 0));
+        for (const p of rows) {
           const val = U.compactCN(p.value || 0);
           html += `<div style="display:flex;align-items:center;gap:8px;margin-top:3px;font-size:12px">
             <span style="width:8px;height:8px;border-radius:2px;background:${p.color};display:inline-block"></span>

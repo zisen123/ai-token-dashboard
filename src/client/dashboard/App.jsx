@@ -72,21 +72,24 @@ export function App() {
   }, []);
 
   const loadSophnet = useCallback((options = {}) => {
-    setSophnetLoading(true);
-    setSophnetError(null);
+    if (!options.silent) {
+      setSophnetLoading(true);
+      setSophnetError(null);
+    }
     const suffix = options.force ? '?refresh=1' : '';
     return fetch(`/api/sophnet${suffix}`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => setSophnet(data))
-      .catch(err => setSophnetError(err.message || 'Sophnet 数据加载失败'))
-      .finally(() => setSophnetLoading(false));
+      .catch(err => { if (!options.silent) setSophnetError(err.message || 'Sophnet 数据加载失败'); })
+      .finally(() => { if (!options.silent) setSophnetLoading(false); });
   }, []);
 
-  const loadData = useCallback(() => {
-    setRefreshing(true);
+  const loadData = useCallback((options = {}) => {
+    const silent = options.silent;
+    if (!silent) setRefreshing(true);
     loadQuota();
     loadHourly();
-    loadSophnet();
+    loadSophnet({ silent });
     fetch('/api/data')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -117,6 +120,15 @@ export function App() {
   const refreshSophnet = useCallback(() => loadSophnet({ force: true }), [loadSophnet]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Silent 60s polling so an open page picks up backend-side refreshes
+  // (scheduled collect, or the Sophnet TTL expiring) without spinning the
+  // manual refresh button. The backend Sophnet TTL still throttles upstream
+  // calls, so this never hammers the API.
+  useEffect(() => {
+    const timer = setInterval(() => loadData({ silent: true }), 60_000);
+    return () => clearInterval(timer);
+  }, [loadData]);
 
   const syncCollectStatus = useCallback((options = {}) => {
     return fetch('/api/collect/status')
