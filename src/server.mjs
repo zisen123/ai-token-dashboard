@@ -1,5 +1,7 @@
 import './load-env.mjs';
 import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -35,6 +37,25 @@ const staticDir = existsSync(resolve(process.cwd(), 'dist'))
 const tlsCertFile = process.env.TLS_CERT_FILE || resolve(process.cwd(), 'certs', 'server.crt');
 const tlsKeyFile = process.env.TLS_KEY_FILE || resolve(process.cwd(), 'certs', 'server.key');
 const tlsEnabled = existsSync(tlsCertFile) && existsSync(tlsKeyFile);
+
+// Build fingerprint for the version-poll auto-reload. Hashes the served
+// index.html (its asset hashes change on every build), cached by mtime so a
+// rebuild without a restart is still detected. Works on any client, trusted
+// cert or not — unlike the service worker path.
+let fpCache = { mtime: 0, v: '' };
+function buildFingerprint() {
+  const p = join(staticDir, 'index.html');
+  let mtime = 0;
+  try { mtime = statSync(p).mtimeMs; } catch { mtime = 0; }
+  if (fpCache.mtime === mtime && fpCache.v) return fpCache.v;
+  try {
+    const v = createHash('sha256').update(readFileSync(p)).digest('hex').slice(0, 16);
+    fpCache = { mtime, v };
+    return v;
+  } catch {
+    return 'unknown';
+  }
+}
 const db = await openDb();
 const as = (name) => db.driver === 'mysql' ? `\`${name}\`` : `"${name}"`;
 // Pricing data for serve-time cache-savings estimation. Same bundled cache
@@ -218,6 +239,10 @@ async function handleApi(req, url, res) {
   if (url.pathname === '/api/sophnet') {
     const force = url.searchParams.get('refresh') === '1';
     sendJson(res, await querySophnet({ force }));
+    return;
+  }
+  if (url.pathname === '/api/version') {
+    sendJson(res, { v: buildFingerprint() });
     return;
   }
   if (url.pathname === '/api/ingest' && req.method === 'POST') {

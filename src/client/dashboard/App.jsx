@@ -27,6 +27,7 @@ export function App() {
   const [sophnet, setSophnet] = useState(null);
   const [sophnetLoading, setSophnetLoading] = useState(false);
   const [sophnetError, setSophnetError] = useState(null);
+  const [buildV, setBuildV] = useState(null);       // fingerprint of the bundle this tab loaded
   const [loadError, setLoadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [collecting, setCollecting] = useState(false);
@@ -119,7 +120,24 @@ export function App() {
 
   const refreshSophnet = useCallback(() => loadSophnet({ force: true }), [loadSophnet]);
 
+  // Fingerprint of the served build. Compared on every silent poll so an open
+  // tab reloads itself after a redeploy even where the service worker is not
+  // available (untrusted cert, old cached page, non-secure context).
+  const checkBuildVersion = useCallback(() => {
+    return fetch('/api/version')
+      .then(r => r.json())
+      .then(d => {
+        if (!d || !d.v || d.v === 'unknown') return;
+        setBuildV(prev => {
+          if (prev && prev !== d.v) window.location.reload();
+          return d.v;
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { checkBuildVersion(); }, [checkBuildVersion]);
 
   // Silent 60s polling so an open page picks up backend-side refreshes
   // (scheduled collect, or the Sophnet TTL expiring) without spinning the
@@ -128,6 +146,7 @@ export function App() {
   useEffect(() => {
     const timer = setInterval(() => {
       loadData({ silent: true });
+      checkBuildVersion();
       // Chrome only checks for service-worker updates on navigation (and
       // ~daily), so an open tab would never notice a redeploy. Nudge it on
       // every poll; a changed sw.js then installs, skipWaits, and the
@@ -139,7 +158,7 @@ export function App() {
       }
     }, 60_000);
     return () => clearInterval(timer);
-  }, [loadData]);
+  }, [loadData, checkBuildVersion]);
 
   const syncCollectStatus = useCallback((options = {}) => {
     return fetch('/api/collect/status')
