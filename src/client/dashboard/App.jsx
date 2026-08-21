@@ -126,7 +126,18 @@ export function App() {
   // manual refresh button. The backend Sophnet TTL still throttles upstream
   // calls, so this never hammers the API.
   useEffect(() => {
-    const timer = setInterval(() => loadData({ silent: true }), 60_000);
+    const timer = setInterval(() => {
+      loadData({ silent: true });
+      // Chrome only checks for service-worker updates on navigation (and
+      // ~daily), so an open tab would never notice a redeploy. Nudge it on
+      // every poll; a changed sw.js then installs, skipWaits, and the
+      // controllerchange handler in main.jsx reloads the page once.
+      if ('serviceWorker' in navigator && window.isSecureContext) {
+        navigator.serviceWorker.getRegistration()
+          .then(reg => reg && reg.update())
+          .catch(() => {});
+      }
+    }, 60_000);
     return () => clearInterval(timer);
   }, [loadData]);
 
