@@ -1154,6 +1154,19 @@ button, input, select { font-family: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
 }
 
+.sophnet-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  padding: 0;
+  background: var(--muted);
+}
+
+.sophnet-vendor-chip.dim {
+  opacity: 0.4;
+}
+
 .sophnet-raw {
   display: grid;
   gap: 10px;

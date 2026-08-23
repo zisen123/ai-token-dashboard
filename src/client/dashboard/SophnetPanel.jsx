@@ -3,7 +3,7 @@
    Uses the same KPI / panel / ECharts language as the main dashboard.
    ============================================================= */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.js';
 import { EChart } from '../shared/echart.jsx';
 import { chartPalette, useTheme } from '../shared/theme.js';
@@ -53,6 +53,10 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
   const [tab, setTab] = useState('stability');
   const [query, setQuery] = useState('');
   const [vendorFilter, setVendorFilter] = useState(new Set());
+  // Cross-component vendor focus: hovering a segment / slice / catalog chip
+  // sets this, and every chart dims/emphasizes the same vendor so the whole
+  // panel reports one shared hover state.
+  const [focusVendor, setFocusVendor] = useState(null);
 
   // The dashboard's global time-range filter applies to every Sophnet figure
   // that is date-bucketed. API payloads already cover the recent window, so
@@ -99,6 +103,18 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
       todayStr
     };
   }, [allDaily]);
+
+  // Cost sparklines are anchored to calendar windows over the FULL history
+  // (not the global filter window), so "本月/本周/本日/最近30天" always read
+  // the same as the calendar-anchored KPI numbers above.
+  const monthDates = useMemo(() => U.rangeDates(`${calSpend.todayStr.slice(0, 7)}-01`, calSpend.todayStr), [calSpend.todayStr]);
+  const monthCostSpark = useMemo(() => sparkFromDaily(allDaily, monthDates, 'costCny'), [allDaily, monthDates]);
+  const weekDates = useMemo(() => U.rangeDates(calSpend.weekStart, calSpend.todayStr), [calSpend.weekStart, calSpend.todayStr]);
+  const weekCostSpark = useMemo(() => sparkFromDaily(allDaily, weekDates, 'costCny'), [allDaily, weekDates]);
+  const day14Dates = useMemo(() => U.rangeDates(U.addDays(calSpend.todayStr, -13), calSpend.todayStr), [calSpend.todayStr]);
+  const dayCostSpark = useMemo(() => sparkFromDaily(allDaily, day14Dates, 'costCny'), [allDaily, day14Dates]);
+  const month30Dates = useMemo(() => U.rangeDates(U.addDays(calSpend.todayStr, -29), calSpend.todayStr), [calSpend.todayStr]);
+  const tokens30Spark = useMemo(() => sparkFromDaily(allDaily, month30Dates, 'tokens'), [allDaily, month30Dates]);
 
   // Aggregates recomputed over the filtered window so every card/chart/table
   // moves with the global time filter.
@@ -283,20 +299,18 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
           label="账户余额"
           value={overview.balance != null ? fmtCny(overview.balance) : '—'}
           sub={`阈值 ${fmtCny(overview.threshold || 0)}`}
-          tone={balanceLow ? 'bad' : 'ok'}
-          sparkValues={tokensSpark}
-          sparkColor="oklch(0.65 0.12 150)" />
+          tone={balanceLow ? 'bad' : 'ok'} />
         <KpiCard
           label="本月已花"
           value={fmtCny(calSpend.month)}
           sub={`自 ${calSpend.todayStr.slice(0, 7)}-01`}
-          sparkValues={tokensSpark}
+          sparkValues={monthCostSpark}
           sparkColor="oklch(0.72 0.14 75)" />
         <KpiCard
           label="本周已花"
           value={fmtCny(calSpend.week)}
           sub={`自 ${calSpend.weekStart}（周一）`}
-          sparkValues={tokensSpark}
+          sparkValues={weekCostSpark}
           sparkColor="oklch(0.60 0.15 295)" />
         <KpiCard
           label="本日已花"
@@ -304,22 +318,24 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
           sub={calSpend.yesterday > 0
             ? `昨日 ${fmtCny(calSpend.yesterday)} · ${fmtDelta(calSpend.day, calSpend.yesterday)}`
             : '昨日无消耗'}
-          sparkValues={tokensSpark}
+          sparkValues={dayCostSpark}
           sparkColor="oklch(0.62 0.16 20)" />
         <KpiCard
           label="最近 30 天 Tokens"
           value={U.compactCN(totals.tokens)}
           sub={`${U.compact(totals.invokes)} 次调用 · ${totals.models} 模型`}
-          sparkValues={tokensSpark}
+          sparkValues={tokens30Spark}
           sparkColor="oklch(0.55 0.16 265)" />
       </div>
 
       <div className="grid">
         <div className="col-8 sophnet-trend-cell">
-          <SophnetTrendChart rows={dailyByDate} vendorRows={vendorDaily} totals={totals} colorMap={vendorColorMap} />
+          <SophnetTrendChart rows={dailyByDate} vendorRows={vendorDaily} totals={totals} colorMap={vendorColorMap}
+            focusVendor={focusVendor} onFocusVendor={setFocusVendor} />
         </div>
         <div className="col-4">
-          <VendorPanel rows={vendorTotals.slice(0, 8)} total={totals.costCny} colorMap={vendorColorMap} />
+          <VendorPanel rows={vendorTotals.slice(0, 8)} total={totals.costCny} colorMap={vendorColorMap}
+            focusVendor={focusVendor} onFocusVendor={setFocusVendor} />
         </div>
         <div className="col-12">
           <div className="panel">
@@ -346,7 +362,8 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
             {tab === 'models' && <UsageModelTable rows={modelTotals} totalCost={totals.costCny} />}
             {tab === 'catalog' && (
               <CatalogView items={filteredModels} vendors={modelCatalog.vendors || []}
-                vendorFilter={vendorFilter} onToggleVendor={toggleVendor} />
+                vendorFilter={vendorFilter} onToggleVendor={toggleVendor}
+                colorMap={vendorColorMap} focusVendor={focusVendor} onFocusVendor={setFocusVendor} />
             )}
             {tab === 'raw' && <RawFields data={data} />}
           </div>
@@ -410,9 +427,18 @@ function classifyVendorFallback(model) {
   return 'Other';
 }
 
-function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
+function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, onFocusVendor }) {
   const pal = chartPalette(useTheme().theme);
   const [mode, setMode] = useState('bar');
+  // Ref mirror of focusVendor for the tooltip formatter (formatter closures
+  // are recreated by ECharts on setOption; a ref keeps the latest value).
+  const focusRef = useRef(focusVendor);
+  focusRef.current = focusVendor;
+  // Whether the pointer is currently sitting ON a segment (single-vendor
+  // tooltip) versus in empty grid space (full breakdown tooltip).
+  const segmentHoverRef = useRef(null);
+  // handlers bound once at chart mount read the latest vendor list via ref
+  const vendorsRef = useRef([]);
   const dates = rows.map(r => r.date);
   const tokens = rows.map(r => r.tokens || 0);
   const costByDate = useMemo(() => {
@@ -432,6 +458,7 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
       .map(([name]) => name);
     const byKey = new Map();
     for (const r of vendorRows) byKey.set(`${r.date}::${r.vendor}`, r.tokens);
+    vendorsRef.current = vendors;
     return { vendors, byKey };
   }, [vendorRows]);
 
@@ -460,6 +487,8 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
     blur: { itemStyle: { opacity: 1 } },
     select: { itemStyle: { opacity: 1 } }
   };
+  const dimmed = (vendor) => (focusVendor && focusVendor !== vendor ? 0.25 : 1);
+
   if (mode === 'bar') {
     vendors.forEach((vendor, i) => {
       series.push({
@@ -467,7 +496,7 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
         type: 'bar',
         stack: 'total',
         barMaxWidth: 24,
-        itemStyle: { color: vendorColor(vendor) },
+        itemStyle: { color: vendorColor(vendor), opacity: dimmed(vendor) },
         ...stableBarState,
         data: dates.map(d => byKey.get(`${d}::${vendor}`) || 0)
       });
@@ -481,8 +510,8 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
       symbol: 'circle',
       symbolSize: 4,
       showSymbol: false,
-        lineStyle: { width: 2, color: vendorColor(vendor) },
-        itemStyle: { color: vendorColor(vendor) },
+        lineStyle: { width: 2, color: vendorColor(vendor), opacity: dimmed(vendor) },
+        itemStyle: { color: vendorColor(vendor), opacity: dimmed(vendor) },
       areaStyle: {
         opacity: 0.08,
         color: {
@@ -534,7 +563,22 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
         let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
         html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${U.compactCN(totalTokens)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500"> tokens</span></div>`;
         html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${fmtCny(cost)}</div>`;
-        // Highest-token vendors first so the tooltip reads like a ranking.
+        // Single-vendor mode: the pointer is sitting on that vendor's segment.
+        const seg = segmentHoverRef.current;
+        if (seg && vendors.includes(seg)) {
+          const p = params.find(x => x.seriesName === seg);
+          const val = p ? (p.value || 0) : 0;
+          const color = vendorColor(seg);
+          html += `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;padding:6px 8px;border-radius:8px;background:rgba(125,125,150,0.12)">
+            <span style="width:10px;height:10px;border-radius:3px;background:${color};display:inline-block"></span>
+            <span style="color:${pal.tooltipSeries};flex:1;font-weight:600">${seg}</span>
+            <span style="font-weight:600;font-variant-numeric:tabular-nums">${U.compactCN(val)} tokens</span>
+          </div>`;
+          const pct = totalTokens ? (val / totalTokens) * 100 : 0;
+          html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}% · 当日费用 ${fmtCny(cost)}</div>`;
+          return html;
+        }
+        // Full-breakdown mode (pointer in empty grid space / y-axis area).
         const rows = params
           .filter(p => p.seriesName !== '7 日均线' && p.value)
           .sort((a, b) => (b.value || 0) - (a.value || 0));
@@ -583,7 +627,28 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
     series
   };
 
-  return (
+  // Segment hover → single-vendor tooltip + cross-panel focus; empty space
+      // (or leaving the chart) → full breakdown + clear focus.
+      const onEvents = {
+        mouseover(params) {
+          if (params.componentType === 'series' && params.seriesType === 'bar' && vendorsRef.current.includes(params.seriesName)) {
+            segmentHoverRef.current = params.seriesName;
+            onFocusVendor?.(params.seriesName);
+          }
+        },
+        mouseout(params) {
+          if (params.componentType === 'series' && params.seriesType === 'bar') {
+            segmentHoverRef.current = null;
+            onFocusVendor?.(null);
+          }
+        },
+        globalout() {
+          segmentHoverRef.current = null;
+          onFocusVendor?.(null);
+        }
+      };
+
+      return (
     <div className="panel">
       <div className="panel-header">
         <div>
@@ -602,14 +667,13 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
           </div>
         </div>
       </div>
-      <EChart option={option} fill />
+      <EChart option={option} fill merge onEvents={onEvents} />
     </div>
   );
 }
 
-function VendorPanel({ rows, total, colorMap }) {
+function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
   const pal = chartPalette(useTheme().theme);
-  const [focused, setFocused] = useState(null);
   const data = rows.map((v, i) => ({
     name: v.vendor,
     value: Number(v.costCny) || 0,
@@ -672,7 +736,7 @@ function VendorPanel({ rows, total, colorMap }) {
         itemStyle: {
           color: d.color,
           borderRadius: sum && d.value / sum >= 0.03 ? 8 : 0,
-          opacity: focused && focused !== d.name ? 0.25 : 1
+          opacity: focusVendor && focusVendor !== d.name ? 0.25 : 1
         },
         emphasis: {
           itemStyle: {
@@ -690,6 +754,18 @@ function VendorPanel({ rows, total, colorMap }) {
     }]
   };
 
+  const pieEvents = {
+        mouseover(params) {
+          if (params.componentType === 'series' && params.name) onFocusVendor?.(params.name);
+        },
+        mouseout(params) {
+          if (params.componentType === 'series') onFocusVendor?.(null);
+        },
+        globalout() {
+          onFocusVendor?.(null);
+        }
+      };
+
   return (
     <div className="panel source-donut-panel">
       <div className="panel-header source-donut-header">
@@ -701,7 +777,7 @@ function VendorPanel({ rows, total, colorMap }) {
       {!data.length && <div className="empty">暂无供应商聚合数据</div>}
       <div className="donut-stack">
         <div className="donut-stage">
-          <EChart option={option} height={236} />
+          <EChart option={option} height={236} onEvents={pieEvents} />
           <div style={{
             position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
             pointerEvents: 'none', textAlign: 'center'
@@ -717,8 +793,9 @@ function VendorPanel({ rows, total, colorMap }) {
             const pct = sum ? (d.value / sum) * 100 : 0;
             return (
               <div key={d.name}
-                className={`legend-item ${focused && focused !== d.name ? 'dim' : ''}`}
-                onClick={() => setFocused(focused === d.name ? null : d.name)}>
+                className={`legend-item ${focusVendor && focusVendor !== d.name ? 'dim' : ''}`}
+                onMouseEnter={() => onFocusVendor?.(d.name)}
+                onMouseLeave={() => onFocusVendor?.(null)}>
                 <span className="legend-swatch" style={{ background: d.color }} />
                 <span className="legend-name" title={d.name}>{d.name}</span>
                 <span className="legend-val">{fmtCny(d.value)}</span>
@@ -796,18 +873,24 @@ function UsageModelTable({ rows, totalCost }) {
   );
 }
 
-function CatalogView({ items, vendors, vendorFilter, onToggleVendor }) {
+function CatalogView({ items, vendors, vendorFilter, onToggleVendor, colorMap, focusVendor, onFocusVendor }) {
   return (
     <div className="sophnet-catalog">
       <div className="sophnet-vendor-cloud">
-        {vendors.map(v => (
-          <button key={v.vendor}
-            className={`sophnet-vendor-chip${vendorFilter.has(v.vendor) ? ' active' : ''}`}
-            onClick={() => onToggleVendor(v.vendor)}
-            title={vendorFilter.has(v.vendor) ? '取消筛选' : '只显示该组'}>
-            {v.vendor}<b>{v.count}</b>
-          </button>
-        ))}
+        {vendors.map(v => {
+          const color = (colorMap && colorMap.get(v.vendor)) || U.getSourceColor(v.vendor);
+          return (
+            <button key={v.vendor}
+              className={`sophnet-vendor-chip${vendorFilter.has(v.vendor) ? ' active' : ''}${focusVendor && focusVendor !== v.vendor ? ' dim' : ''}`}
+              onClick={() => onToggleVendor(v.vendor)}
+              onMouseEnter={() => onFocusVendor?.(v.vendor)}
+              onMouseLeave={() => onFocusVendor?.(null)}
+              title={vendorFilter.has(v.vendor) ? '取消筛选' : '只显示该组'}>
+              <span className="sophnet-chip-dot" style={{ background: color }} />
+              {v.vendor}<b>{v.count}</b>
+            </button>
+          );
+        })}
       </div>
       <div className="table-wrap">
         <table className="dt">

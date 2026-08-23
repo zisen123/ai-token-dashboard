@@ -6,7 +6,7 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 
-export function EChart({ option, height = 320, onEvents, fill = false }) {
+export function EChart({ option, height = 320, onEvents, fill = false, merge = false }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
 
@@ -36,8 +36,16 @@ export function EChart({ option, height = 320, onEvents, fill = false }) {
   }, [fill]);
 
   useEffect(() => {
-    if (chartRef.current) chartRef.current.setOption(option, true);
-  }, [option]);
+    // merge mode: a re-render that only touches itemStyle opacity (cross-chart
+    // focus dimming) must not rebuild series, or ECharts fires mouseout and
+    // the hover chain (segmentHoverRef → tooltip) breaks. The series array is
+    // still replaced wholesale (replaceMerge) so bar↔line mode switches cannot
+    // leave stale series behind. Default (notMerge) stays for every other
+    // chart where a full replace is the safe behavior.
+    if (chartRef.current) {
+      chartRef.current.setOption(option, merge ? { replaceMerge: ['series'] } : true);
+    }
+  }, [option, merge]);
 
   return <div ref={ref} style={fill ? { width: '100%', height: '100%', flex: 1, minHeight: 0 } : { width: '100%', height }} />;
 }
