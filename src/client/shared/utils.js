@@ -47,6 +47,111 @@ function getSourceColor(name) {
   return PALETTE_FALLBACK[h % PALETTE_FALLBACK.length];
 }
 
+/* ------------------------------------------------------------
+   Automatic comfortable color assignment for a *set* of names.
+
+   Problem it solves: single-name hash lookup can hand two names
+   on the same screen the same (or perceptually identical) color.
+   Instead, assign colors to the whole set at once:
+
+   1. Names with a PALETTE entry keep their brand color; their
+      position in OKLab is marked as occupied.
+   2. Unknown names are processed in hash order (deterministic)
+      and greedily take the pool color that maximizes the minimum
+      perceptual distance (OKLab ΔE) to everything already used.
+
+   The pool itself was generated offline with comfort constraints:
+   L chosen per hue to balance contrast on both light and dark
+   backgrounds (all ≥ 3.1:1), C capped in the yellow-green band,
+   and chroma reduced adaptively where high-L hues leave sRGB.
+   ------------------------------------------------------------ */
+
+// 24-hue categorical pool, precomputed (see gen_palette script).
+const COLOR_POOL = [
+  'oklch(0.755 0.13 7)',  'oklch(0.755 0.13 22)', 'oklch(0.755 0.13 37)',
+  'oklch(0.76 0.13 52)',  'oklch(0.76 0.13 67)',  'oklch(0.76 0.13 82)',
+  'oklch(0.76 0.11 97)',  'oklch(0.76 0.11 112)', 'oklch(0.76 0.11 127)',
+  'oklch(0.76 0.13 142)', 'oklch(0.755 0.13 157)','oklch(0.75 0.13 172)',
+  'oklch(0.75 0.13 187)', 'oklch(0.755 0.12 202)','oklch(0.75 0.13 217)',
+  'oklch(0.755 0.13 232)','oklch(0.76 0.13 247)', 'oklch(0.745 0.13 262)',
+  'oklch(0.745 0.13 277)','oklch(0.76 0.13 292)', 'oklch(0.76 0.13 307)',
+  'oklch(0.76 0.13 322)', 'oklch(0.76 0.13 337)', 'oklch(0.76 0.13 352)',
+];
+
+function oklchToOklab(L, C, hDeg) {
+  const h = hDeg * Math.PI / 180;
+  return [L, C * Math.cos(h), C * Math.sin(h)];
+}
+
+function parseOklab(color) {
+  const m = /oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)/.exec(color);
+  if (!m) return null;
+  return oklchToOklab(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
+}
+
+const POOL_LAB = COLOR_POOL.map(parseOklab);
+
+function hashName(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+// Cache: sorted-name-set key → Map(name → color), so repeated calls
+// across components in one render return the identical assignment.
+const colorSetCache = new Map();
+
+function getSourceColors(names) {
+  const unique = Array.from(new Set(names.filter(Boolean)));
+  const key = unique.slice().sort().join('\u0000');
+  const hit = colorSetCache.get(key);
+  if (hit) return hit;
+
+  const result = new Map();
+  const usedLab = [];   // OKLab coords of every color handed out
+  const usedIdx = new Set(); // pool indices already taken
+
+  const put = (name, color) => {
+    result.set(name, color);
+    const lab = parseOklab(color);
+    if (lab) usedLab.push(lab);
+  };
+
+  // 1) brand colors first (their hues become off-limits for auto picks)
+  const unknown = [];
+  for (const name of unique) {
+    if (PALETTE[name]) put(name, PALETTE[name]);
+    else unknown.push(name);
+  }
+
+  // 2) unknown names in hash order, greedy max-min ΔE over the pool
+  unknown.sort((a, b) => hashName(a) - hashName(b));
+  for (const name of unknown) {
+    let bestIdx = -1, bestDist = -1;
+    for (let i = 0; i < POOL_LAB.length; i++) {
+      if (usedIdx.has(i)) continue;
+      const c = POOL_LAB[i];
+      let minD = Infinity;
+      for (const u of usedLab) {
+        const d = Math.hypot(c[0] - u[0], c[1] - u[1], c[2] - u[2]);
+        if (d < minD) minD = d;
+      }
+      const score = usedLab.length ? minD : Infinity;
+      if (score > bestDist) { bestDist = score; bestIdx = i; }
+    }
+    if (bestIdx >= 0) {
+      usedIdx.add(bestIdx);
+      put(name, COLOR_POOL[bestIdx]);
+    } else {
+      // pool exhausted (unlikely, 24 slots) — legacy hash fallback
+      put(name, PALETTE_FALLBACK[hashName(name) % PALETTE_FALLBACK.length]);
+    }
+  }
+
+  colorSetCache.set(key, result);
+  return result;
+}
+
 const fmt   = new Intl.NumberFormat('zh-CN');
 const fmtUS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtUS4 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -259,7 +364,7 @@ function alpha(color, a) {
 }
 
 export const U = {
-  PALETTE, PALETTE_FALLBACK, getSourceColor,
+  PALETTE, PALETTE_FALLBACK, getSourceColor, getSourceColors,
   fmt, fmtUS, fmtUS4,
   compact, compactCN, pct, deltaPct, formatTs,
   localDateStr, toDateTimeLocalValue, startOfDayLocal, endOfDayLocal, daysAgo, addDays, rangeDates,

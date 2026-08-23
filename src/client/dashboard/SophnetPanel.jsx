@@ -250,6 +250,17 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
     return Array.from(map.values());
   }, [daily, modelCatalog.items]);
 
+  // Assign vendor colors once for the whole panel: every component (stacked
+  // trend, pie, legend) draws from the same set-assignment so two vendors can
+  // never land on the same or a perceptually-near color.
+  const vendorColorMap = useMemo(() => {
+    const names = new Set();
+    for (const v of vendorDaily) names.add(v.vendor);
+    for (const v of vendorTotals) names.add(v.vendor);
+    for (const v of (modelCatalog.vendors || [])) names.add(v.vendor);
+    return U.getSourceColors(Array.from(names));
+  }, [vendorDaily, vendorTotals, modelCatalog]);
+
   if (!loading && !data && !error) return null;
 
   return (
@@ -305,10 +316,10 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
 
       <div className="grid">
         <div className="col-8 sophnet-trend-cell">
-          <SophnetTrendChart rows={dailyByDate} vendorRows={vendorDaily} totals={totals} />
+          <SophnetTrendChart rows={dailyByDate} vendorRows={vendorDaily} totals={totals} colorMap={vendorColorMap} />
         </div>
         <div className="col-4">
-          <VendorPanel rows={vendorTotals.slice(0, 8)} total={totals.costCny} />
+          <VendorPanel rows={vendorTotals.slice(0, 8)} total={totals.costCny} colorMap={vendorColorMap} />
         </div>
         <div className="col-12">
           <div className="panel">
@@ -399,7 +410,7 @@ function classifyVendorFallback(model) {
   return 'Other';
 }
 
-function SophnetTrendChart({ rows, vendorRows, totals }) {
+function SophnetTrendChart({ rows, vendorRows, totals, colorMap }) {
   const pal = chartPalette(useTheme().theme);
   const [mode, setMode] = useState('bar');
   const dates = rows.map(r => r.date);
@@ -423,6 +434,8 @@ function SophnetTrendChart({ rows, vendorRows, totals }) {
     for (const r of vendorRows) byKey.set(`${r.date}::${r.vendor}`, r.tokens);
     return { vendors, byKey };
   }, [vendorRows]);
+
+  const vendorColor = (vendor) => (colorMap && colorMap.get(vendor)) || U.getSourceColor(vendor);
 
   // Rolling 7-day baseline, same as the main TrendChart's "7 日均线" overlay.
   const rolling = (() => {
@@ -594,17 +607,13 @@ function SophnetTrendChart({ rows, vendorRows, totals }) {
   );
 }
 
-function vendorColor(vendor) {
-  return U.getSourceColor(vendor);
-}
-
-function VendorPanel({ rows, total }) {
+function VendorPanel({ rows, total, colorMap }) {
   const pal = chartPalette(useTheme().theme);
   const [focused, setFocused] = useState(null);
   const data = rows.map((v, i) => ({
     name: v.vendor,
     value: Number(v.costCny) || 0,
-    color: vendorColor(v.vendor)
+    color: (colorMap && colorMap.get(v.vendor)) || U.getSourceColor(v.vendor)
   })).sort((a, b) => b.value - a.value);
   const sum = data.reduce((s, d) => s + d.value, 0);
 
