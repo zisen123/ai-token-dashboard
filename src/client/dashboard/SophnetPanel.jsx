@@ -7,6 +7,7 @@ import { useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.js';
 import { EChart } from '../shared/echart.jsx';
 import { chartPalette, useTheme } from '../shared/theme.js';
+import { TREND_ANIMATION, buildTrendSeries, makeTrendFormatter, makeTrendHoverEvents } from '../shared/trend.js';
 
 const fmtCNY = new Intl.NumberFormat('zh-CN', {
   style: 'currency',
@@ -476,76 +477,23 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
     return arr;
   })();
 
-  const series = [];
-  // Same protection the main TrendChart documents for its line mode: letting
-  // ECharts recompute per-item styles on hover can break its color pipeline
-  // (it cannot interpolate oklch strings), which renders the column under the
-  // cursor invisible. Disabling emphasis entirely keeps the axis tooltip
-  // without any per-item restyle, so columns stay put.
-  const stableBarState = {
-    emphasis: { disabled: true },
-    blur: { itemStyle: { opacity: 1 } },
-    select: { itemStyle: { opacity: 1 } }
-  };
-  const dimmed = (vendor) => (focusVendor && focusVendor !== vendor ? 0.25 : 1);
-
-  if (mode === 'bar') {
-    vendors.forEach((vendor, i) => {
-      series.push({
-        name: vendor,
-        type: 'bar',
-        stack: 'total',
-        barMaxWidth: 24,
-        itemStyle: { color: vendorColor(vendor), opacity: dimmed(vendor) },
-        ...stableBarState,
-        data: dates.map(d => byKey.get(`${d}::${vendor}`) || 0)
-      });
-    });
-  } else {
-    vendors.forEach((vendor, i) => {
-      series.push({
-        name: vendor,
-      type: 'line',
-      smooth: 0.3,
-      symbol: 'circle',
-      symbolSize: 4,
-      showSymbol: false,
-        lineStyle: { width: 2, color: vendorColor(vendor), opacity: dimmed(vendor) },
-        itemStyle: { color: vendorColor(vendor), opacity: dimmed(vendor) },
-      areaStyle: {
-        opacity: 0.08,
-        color: {
-          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [
-              { offset: 0, color: vendorColor(vendor) },
-            { offset: 1, color: 'transparent' }
-          ]
-        }
-      },
-      emphasis: { disabled: true },
-        data: dates.map(d => byKey.get(`${d}::${vendor}`) || 0)
-      });
-    });
-  }
-  if (mode !== 'line' && dates.length > 10) {
-    series.push({
-      name: '7 日均线',
-      type: 'line',
-      smooth: 0.5,
-      symbol: 'none',
-      lineStyle: { width: 1.6, color: pal.markLineCompare, type: [4, 4] },
-      itemStyle: { color: pal.markLineCompare },
-      emphasis: { focus: 'none', lineStyle: { width: 1.6, opacity: 1 }, itemStyle: { opacity: 1 } },
-      blur: { lineStyle: { opacity: 1 }, itemStyle: { opacity: 1 } },
-      select: { lineStyle: { opacity: 1 }, itemStyle: { opacity: 1 } },
-      data: rolling,
-      z: 4
-    });
-  }
+  const series = buildTrendSeries({
+    // Sophnet's "柱状" tab is a stacked column (vendors share one column),
+    // which the shared builder calls 'stacked'.
+    mode: mode === 'bar' ? 'stacked' : mode,
+    names: vendors,
+    colorOf: vendorColor,
+    byKey,
+    dates,
+    dimName: focusVendor,
+    rolling,
+    compare: null,
+    pal
+  });
 
   const option = {
     backgroundColor: 'transparent',
-    animationDuration: 400,
+    ...TREND_ANIMATION,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'line', lineStyle: { color: pal.crossHair, width: 1, type: [3, 3] } },
@@ -555,43 +503,15 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
       padding: [10, 12],
       textStyle: { color: pal.tooltipText, fontSize: 12 },
       extraCssText: 'box-shadow: var(--shadow-pop); border-radius: 10px;',
-      formatter(params) {
-        const date = params[0]?.axisValue || '';
-        let totalTokens = 0;
-        for (const p of params) if (vendors.includes(p.seriesName)) totalTokens += p.value || 0;
-        const cost = costByDate.get(date) || 0;
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
-        html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${U.compactCN(totalTokens)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500"> tokens</span></div>`;
-        html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${fmtCny(cost)}</div>`;
-        // Single-vendor mode: the pointer is sitting on that vendor's segment.
-        const seg = segmentHoverRef.current;
-        if (seg && vendors.includes(seg)) {
-          const p = params.find(x => x.seriesName === seg);
-          const val = p ? (p.value || 0) : 0;
-          const color = vendorColor(seg);
-          html += `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;padding:6px 8px;border-radius:8px;background:rgba(125,125,150,0.12)">
-            <span style="width:10px;height:10px;border-radius:3px;background:${color};display:inline-block"></span>
-            <span style="color:${pal.tooltipSeries};flex:1;font-weight:600">${seg}</span>
-            <span style="font-weight:600;font-variant-numeric:tabular-nums">${U.compactCN(val)} tokens</span>
-          </div>`;
-          const pct = totalTokens ? (val / totalTokens) * 100 : 0;
-          html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}% · 当日费用 ${fmtCny(cost)}</div>`;
-          return html;
-        }
-        // Full-breakdown mode (pointer in empty grid space / y-axis area).
-        const rows = params
-          .filter(p => p.seriesName !== '7 日均线' && p.value)
-          .sort((a, b) => (b.value || 0) - (a.value || 0));
-        for (const p of rows) {
-          const val = U.compactCN(p.value || 0);
-          html += `<div style="display:flex;align-items:center;gap:8px;margin-top:3px;font-size:12px">
-            <span style="width:8px;height:8px;border-radius:2px;background:${p.color};display:inline-block"></span>
-            <span style="color:${pal.tooltipSeries};flex:1">${p.seriesName}</span>
-            <span style="font-weight:600;margin-left:18px;font-variant-numeric:tabular-nums">${val} tokens</span>
-          </div>`;
-        }
-        return html;
-      }
+      formatter: makeTrendFormatter({
+        pal,
+        names: vendors,
+        segmentRef: segmentHoverRef,
+        costOf: (date) => costByDate.get(date) || 0,
+        fmtValue: U.compactCN,
+        valueSuffix: ' tokens',
+        fmtCost: fmtCny
+      })
     },
     legend: { show: false },
     grid: { left: 8, right: 12, top: 16, bottom: dates.length > 20 ? 40 : 30, containLabel: true },
@@ -628,25 +548,12 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
   };
 
   // Segment hover → single-vendor tooltip + cross-panel focus; empty space
-      // (or leaving the chart) → full breakdown + clear focus.
-      const onEvents = {
-        mouseover(params) {
-          if (params.componentType === 'series' && params.seriesType === 'bar' && vendorsRef.current.includes(params.seriesName)) {
-            segmentHoverRef.current = params.seriesName;
-            onFocusVendor?.(params.seriesName);
-          }
-        },
-        mouseout(params) {
-          if (params.componentType === 'series' && params.seriesType === 'bar') {
-            segmentHoverRef.current = null;
-            onFocusVendor?.(null);
-          }
-        },
-        globalout() {
-          segmentHoverRef.current = null;
-          onFocusVendor?.(null);
-        }
-      };
+  // (or leaving the chart) → full breakdown + clear focus.
+  const onEvents = makeTrendHoverEvents({
+    namesRef: vendorsRef,
+    segmentRef: segmentHoverRef,
+    onFocus: onFocusVendor
+  });
 
       return (
     <div className="panel">

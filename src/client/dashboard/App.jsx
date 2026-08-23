@@ -298,6 +298,9 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, s
   const [trendMode, setTrendMode] = useState('stacked');
   const [drill, setDrill] = useState(null);
   const [focusedSource, setFocusedSource] = useState(null);
+  // Transient hover focus (dims trend + donut without filtering data).
+  // Click-focus (focusedSource) still filters everything.
+  const [hoverSource, setHoverSource] = useState(null);
 
   // The precise (datetime) view is the only consumer of per-event data; fetch it
   // the first time the user switches into that mode.
@@ -533,7 +536,9 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, s
             mode={trendMode}
             onModeChange={setTrendMode}
             totals={totals}
-            onExport={onExportTrend} />
+            onExport={onExportTrend}
+            focusSource={hoverSource}
+            onFocusSource={setHoverSource} />
         </div>
         <div className="col-4">
           <SourceDonut
@@ -541,7 +546,9 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, s
             sources={Array.from(new Set(filtered.map(r => r.source)))}
             total={totals.totalTokens}
             focused={focusedSource}
-            onFocusSource={setFocusedSource} />
+            onFocusSource={setFocusedSource}
+            hoverSource={hoverSource}
+            onHoverSource={setHoverSource} />
         </div>
 
         <div className="col-6">

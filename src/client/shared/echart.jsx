@@ -3,12 +3,24 @@
    page so init/resize/dispose and option updates behave identically.
    ============================================================= */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as echarts from 'echarts';
+
+// Structural fingerprint of the series array (type+name per entry). When it
+// is unchanged between renders, a merge-mode setOption can plain-merge so
+// series keep their identity (no re-grow animation, no hover-chain break);
+// when it changes (bar↔line switch, source list change) we replaceMerge so
+// stale series cannot linger.
+function seriesSignature(series) {
+  if (!Array.isArray(series)) return '';
+  return series.map(s => `${s && s.type}:${s && s.name}`).join('|');
+}
 
 export function EChart({ option, height = 320, onEvents, fill = false, merge = false }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
+  const sig = useMemo(() => seriesSignature(option && option.series), [option]);
+  const prevSig = useRef(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -36,16 +48,24 @@ export function EChart({ option, height = 320, onEvents, fill = false, merge = f
   }, [fill]);
 
   useEffect(() => {
-    // merge mode: a re-render that only touches itemStyle opacity (cross-chart
-    // focus dimming) must not rebuild series, or ECharts fires mouseout and
-    // the hover chain (segmentHoverRef → tooltip) breaks. The series array is
-    // still replaced wholesale (replaceMerge) so bar↔line mode switches cannot
-    // leave stale series behind. Default (notMerge) stays for every other
-    // chart where a full replace is the safe behavior.
-    if (chartRef.current) {
-      chartRef.current.setOption(option, merge ? { replaceMerge: ['series'] } : true);
+    if (!chartRef.current) return;
+    if (!merge) {
+      // Full replace: the safe default for charts whose option shape can
+      // change arbitrarily between renders.
+      chartRef.current.setOption(option, true);
+    } else if (prevSig.current === sig) {
+      // Same series structure: plain merge keeps series identity, so a
+      // re-render that only touches itemStyle opacity (cross-chart focus
+      // dimming) neither rebuilds series (which would fire mouseout and
+      // break the hover chain) nor replays the grow animation.
+      chartRef.current.setOption(option);
+    } else {
+      // Structure changed (mode switch / source list change): replace the
+      // series array wholesale so no stale series lingers.
+      chartRef.current.setOption(option, { replaceMerge: ['series'] });
     }
-  }, [option, merge]);
+    prevSig.current = sig;
+  }, [option, merge, sig]);
 
   return <div ref={ref} style={fill ? { width: '100%', height: '100%', flex: 1, minHeight: 0 } : { width: '100%', height }} />;
 }

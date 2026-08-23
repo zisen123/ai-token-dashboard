@@ -10,6 +10,7 @@ import { Delta, Spark } from './components-top.jsx';
 import { sourceIcon, sourceIconScale } from './source-icons.js';
 import { chartPalette, useTheme } from '../shared/theme.js';
 import { GAUGE, GAUGE_PATH, gaugeDash } from '../shared/gauge.js';
+import { TREND_ANIMATION, buildTrendSeries, makeTrendFormatter, makeTrendHoverEvents } from '../shared/trend.js';
 
 // ───────────────────────────────────────────────────────────────
 // Trend chart — switchable bar/line/stacked + optional comparison
@@ -20,7 +21,7 @@ const TREND_MODES = [
   { id: 'bar',     label: '柱状' }
 ];
 
-function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, prevTotals, onExport, density }) {
+function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onModeChange, totals, prevTotals, onExport, density, focusSource, onFocusSource }) {
   // ECharts paints to canvas, so chart chrome takes its colours from the
   // palette rather than CSS variables.
   const pal = chartPalette(useTheme().theme);
@@ -59,103 +60,34 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
     return arr;
   })();
 
-  // Build the series based on mode
-  const series = [];
-  const palette = sources.map(s => U.getSourceColor(s));
-  const stableBarState = {
-    // ECharts 6 cannot interpolate oklch() color strings when restyling bars
-    // for the hover state, which renders the hovered column invisible. The
-    // axis tooltip does not need per-item restyling, so disable emphasis.
-    emphasis: { disabled: true },
-    blur: { itemStyle: { opacity: 1 } },
-    select: { itemStyle: { opacity: 1 } }
-  };
-  // NOTE: do NOT put `areaStyle` in any state object. The base areaStyle uses a
-  // linear-gradient color; including areaStyle in emphasis/blur/select makes ECharts
-  // animate the gradient on hover, which crashes its color interpolator
-  // ("Cannot read properties of undefined (reading 'length')") and freezes the chart.
-  const stableLineState = (width = 2) => ({
-    emphasis: { focus: 'none', lineStyle: { width, opacity: 1 }, itemStyle: { opacity: 1 } },
-    blur: { lineStyle: { opacity: 1 }, itemStyle: { opacity: 1 } },
-    select: { lineStyle: { opacity: 1 }, itemStyle: { opacity: 1 } }
+  // Hover state for the two-level tooltip + cross-chart dimming. Handlers
+  // are bound once at chart mount, so they read the latest source list via
+  // a ref.
+  const segmentHoverRef = useRef(null);
+  const namesRef = useRef(sources);
+  namesRef.current = sources;
+
+  const series = buildTrendSeries({
+    mode,
+    names: sources,
+    colorOf: (s) => U.getSourceColor(s),
+    byKey,
+    dates,
+    dimName: focusSource,
+    rolling,
+    compare: compareSeries ? { data: dates.map((_, i) => compareSeries[i] || 0), pal } : null,
+    pal
   });
 
-  if (mode === 'stacked' || mode === 'bar') {
-    sources.forEach((src, i) => {
-      series.push({
-        name: src,
-        type: 'bar',
-        stack: mode === 'stacked' ? 'total' : undefined,
-        barMaxWidth: 24,
-        itemStyle: { color: palette[i] },
-        ...stableBarState,
-        data: dates.map(d => byKey.get(`${d}::${src}`) || 0)
-      });
-    });
-  } else if (mode === 'line') {
-    sources.forEach((src, i) => {
-      series.push({
-        name: src,
-        type: 'line',
-        smooth: 0.3,
-        symbol: 'circle',
-        symbolSize: 4,
-        showSymbol: false,
-        lineStyle: { width: 2, color: palette[i] },
-        itemStyle: { color: palette[i] },
-        areaStyle: {
-          opacity: 0.08,
-          color: {
-            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: palette[i] },
-              { offset: 1, color: 'transparent' }
-            ]
-          }
-        },
-        // Emphasis is disabled here: hovering an area-filled line would make ECharts
-        // animate its gradient areaStyle, crashing the color interpolator and freezing
-        // the whole chart. Tooltip + axisPointer still work without emphasis.
-        emphasis: { disabled: true },
-        data: dates.map(d => byKey.get(`${d}::${src}`) || 0)
-      });
-    });
-  }
-
-  // Compare overlay (dashed total of previous period)
-  if (compareSeries) {
-    series.push({
-      name: '上一周期',
-      type: 'line',
-      smooth: 0.3,
-      symbol: 'none',
-      lineStyle: { width: 1.2, color: pal.markLine, type: 'dashed', opacity: 0.55 },
-      itemStyle: { color: pal.markLine },
-      ...stableLineState(1.2),
-      data: dates.map((_, i) => compareSeries[i] || 0),
-      z: 3
-    });
-  }
-
-  // 7-day rolling baseline (subtle)
-  if (mode !== 'line' && dates.length > 10) {
-    series.push({
-      name: '7 日均线',
-      type: 'line',
-      smooth: 0.5,
-      symbol: 'none',
-      lineStyle: { width: 1.6, color: pal.markLineCompare, type: [4, 4] },
-      itemStyle: { color: pal.markLineCompare },
-      ...stableLineState(1.6),
-      data: rolling,
-      z: 4
-    });
-  }
+  const onEvents = makeTrendHoverEvents({
+    namesRef,
+    segmentRef: segmentHoverRef,
+    onFocus: onFocusSource
+  });
 
   const option = {
     backgroundColor: 'transparent',
-    animation: true,
-    animationDuration: 400,
+    ...TREND_ANIMATION,
     tooltip: {
       trigger: 'axis',
       axisPointer: {
@@ -168,21 +100,13 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
       padding: [10, 12],
       textStyle: { color: pal.tooltipText, fontSize: 12 },
       extraCssText: 'box-shadow: var(--shadow-pop); border-radius: 10px;',
-      formatter(params) {
-        const date = params[0]?.axisValue || '';
-        let total = 0;
-        for (const p of params) if (sources.includes(p.seriesName)) total += p.value || 0;
-        let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
-        html += `<div style="font-size:16px;font-weight:600;margin-bottom:8px">${U.compactCN(total)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500"> tokens</span></div>`;
-        for (const p of params) {
-          html += `<div style="display:flex;align-items:center;gap:8px;margin-top:3px;font-size:12px">
-            <span style="width:8px;height:8px;border-radius:2px;background:${p.color};display:inline-block"></span>
-            <span style="color:${pal.tooltipSeries};flex:1">${p.seriesName}</span>
-            <span style="font-weight:600;margin-left:18px;font-variant-numeric:tabular-nums">${U.compactCN(p.value || 0)}</span>
-          </div>`;
-        }
-        return html;
-      }
+      formatter: makeTrendFormatter({
+        pal,
+        names: sources,
+        segmentRef: segmentHoverRef,
+        fmtValue: U.compactCN,
+        valueSuffix: ' tokens'
+      })
     },
     legend: { show: false },
     grid: { left: 8, right: 12, top: 16, bottom: density === 'compact' ? 26 : 40, containLabel: true },
@@ -253,7 +177,7 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
           </button>
         </div>
       </div>
-      <EChart option={option} height={320}/>
+      <EChart option={option} height={320} merge onEvents={onEvents} />
     </div>
   );
 }
@@ -261,7 +185,7 @@ function TrendChart({ rows, dates, sources, compareRows, compareDates, mode, onM
 // ───────────────────────────────────────────────────────────────
 // Donut chart — source share
 // ───────────────────────────────────────────────────────────────
-function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
+function SourceDonut({ rows, sources, total, onFocusSource, focused, hoverSource, onHoverSource }) {
   const pal = chartPalette(useTheme().theme);
   const data = sources.map(src => {
     let v = 0;
@@ -270,6 +194,20 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
   }).sort((a, b) => b.value - a.value);
 
   const sum = data.reduce((s, d) => s + d.value, 0);
+  // Click-focus (filter) wins; hover-focus is transient.
+  const dimName = focused || hoverSource;
+
+  const donutEvents = {
+    mouseover(p) {
+      if (p.componentType === 'series' && p.name) onHoverSource?.(p.name);
+    },
+    mouseout(p) {
+      if (p.componentType === 'series') onHoverSource?.(null);
+    },
+    globalout() {
+      onHoverSource?.(null);
+    }
+  };
 
   const option = {
     backgroundColor: 'transparent',
@@ -327,7 +265,7 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
         return {
           name: d.name,
           value: d.value,
-          itemStyle: { color: d.color, borderRadius, opacity: focused && focused !== d.name ? 0.25 : 1 },
+          itemStyle: { color: d.color, borderRadius, opacity: dimName && dimName !== d.name ? 0.25 : 1 },
           emphasis: {
             itemStyle: {
               color: d.color,
@@ -355,7 +293,7 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
       </div>
       <div className="donut-stack">
         <div className="donut-stage">
-          <EChart option={option} height={236}/>
+          <EChart option={option} height={236} merge onEvents={donutEvents} />
           <div style={{
             position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
             pointerEvents: 'none', textAlign: 'center'
@@ -371,8 +309,10 @@ function SourceDonut({ rows, sources, total, onFocusSource, focused }) {
         <div className="legend">
           {data.map(d => (
             <div key={d.name}
-              className={`legend-item ${focused && focused !== d.name ? 'dim' : ''}`}
-              onClick={() => onFocusSource(focused === d.name ? null : d.name)}>
+              className={`legend-item ${dimName && dimName !== d.name ? 'dim' : ''}`}
+              onClick={() => onFocusSource(focused === d.name ? null : d.name)}
+              onMouseEnter={() => onHoverSource?.(d.name)}
+              onMouseLeave={() => onHoverSource?.(null)}>
               <span className="legend-swatch" style={{background: d.color}}/>
               <span className="legend-name" title={d.name}>{d.name}</span>
               <span className="legend-val">{U.compactCN(d.value)}</span>
