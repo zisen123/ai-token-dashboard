@@ -155,10 +155,9 @@ function buildTrendSeries(o) {
  * @param {(date,name)=>string|null} [o.segmentSecondaryOf] per-source
  *   secondary line shown on the segment row (e.g. the hovered vendor's
  *   other metric)
- * @param {string} [o.secondaryLabel] prefix of the segment-mode sub line
  */
 function makeTrendFormatter(o) {
-  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost, secondaryOf, segmentSecondaryOf, secondaryLabel = '当日费用' } = o;
+  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost, secondaryOf, segmentSecondaryOf } = o;
   const secondary = (date) => {
     if (secondaryOf) return secondaryOf(date) || null;
     const cost = costOf ? (costOf(date) || 0) : null;
@@ -169,13 +168,23 @@ function makeTrendFormatter(o) {
     let total = 0;
     for (const p of params) if (names.includes(p.seriesName)) total += p.value || 0;
     const sub = secondary(date);
-    let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
-    html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${fmtValue(total)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500">${valueSuffix.trim()}</span></div>`;
-    if (sub != null) html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${sub}</div>`;
 
-    // Single-source mode: pointer sits on that source's segment.
+    // Single-source mode: pointer sits on that source's segment. When the
+    // hovered source is the day's only non-zero source, the column headline
+    // would just repeat the segment row's numbers — skip the headline and
+    // the 100% share line, keeping date + one row.
     const seg = segmentRef.current;
-    if (seg && names.includes(seg)) {
+    const segActive = seg && names.includes(seg);
+    const soleSource = segActive &&
+      params.filter(p => names.includes(p.seriesName) && p.value).length === 1;
+
+    let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
+    if (!soleSource) {
+      html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${fmtValue(total)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500">${valueSuffix.trim()}</span></div>`;
+      if (sub != null) html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${sub}</div>`;
+    }
+
+    if (segActive) {
       const p = params.find(x => x.seriesName === seg);
       const val = p ? (p.value || 0) : 0;
       const segSub = segmentSecondaryOf ? segmentSecondaryOf(date, seg) : null;
@@ -185,8 +194,10 @@ function makeTrendFormatter(o) {
         ${segSub ? `<span style="color:${pal.tooltipMuted};font-variant-numeric:tabular-nums">${segSub}</span>` : ''}
         <span style="font-weight:600;font-variant-numeric:tabular-nums">${fmtValue(val)}${valueSuffix}</span>
       </div>`;
-      const pct = total ? (val / total) * 100 : 0;
-      html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}%${sub != null ? ` · ${secondaryLabel} ${sub}` : ''}</div>`;
+      if (!soleSource) {
+        const pct = total ? (val / total) * 100 : 0;
+        html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}%</div>`;
+      }
       return html;
     }
 

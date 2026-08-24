@@ -639,8 +639,7 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
           return metric === 'cost'
             ? `${U.compactCN(r.tokens || 0)} tokens`
             : fmtCny(r.costCny || 0);
-        },
-        secondaryLabel: metric === 'cost' ? '当日 Tokens' : '当日费用'
+        }
       })
     },
     legend: { show: false },
