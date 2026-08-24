@@ -152,9 +152,22 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
   const balance = data?.live?.balance || {};
   const balanceLow = Number(overview.balance) <= Number(overview.threshold || 0);
   const modelCatalog = data?.live?.models || data?.modelCatalog || { total: 0, vendors: [], items: [] };
-  const allDaily = data?.live?.usage?.daily || data?.recentDaily || [];
+  // The backend's live usage_detail only covers the recent 30 days (API
+  // limit), while the local cache (data.daily) holds the full history. Merge
+  // the two — history as the base, live rows overriding the dates they cover
+  // — so "全部" shows the full history and the recent window stays live.
+  const allDaily = useMemo(() => {
+    const history = data?.daily || data?.recentDaily || [];
+    const live = data?.live?.usage?.daily || [];
+    if (!live.length) return history;
+    const liveDates = new Set(live.map(r => r.date));
+    return [...history.filter(r => !liveDates.has(r.date)), ...live];
+  }, [data]);
   const daily = useMemo(() => allDaily.filter(r => inRange(r.date)), [allDaily, startDate, endDate]);
-  const allDates = data?.live?.usage?.dates || (data?.range ? U.rangeDates(data.range.start, data.range.end) : []);
+  const allDates = useMemo(
+    () => Array.from(new Set(allDaily.map(r => r.date))).sort(),
+    [allDaily]
+  );
   const dates = useMemo(() => allDates.filter(inRange), [allDates, startDate, endDate]);
   const tokensSpark = useMemo(() => sparkFromDaily(daily, dates, 'tokens'), [daily, dates]);
 
@@ -198,9 +211,6 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
   const weekCostSpark = useMemo(() => sparkFromDaily(allDaily, weekDates, 'costCny'), [allDaily, weekDates]);
   const day14Dates = useMemo(() => U.rangeDates(U.addDays(calSpend.todayStr, -13), calSpend.todayStr), [calSpend.todayStr]);
   const dayCostSpark = useMemo(() => sparkFromDaily(allDaily, day14Dates, 'costCny'), [allDaily, day14Dates]);
-  const month30Dates = useMemo(() => U.rangeDates(U.addDays(calSpend.todayStr, -29), calSpend.todayStr), [calSpend.todayStr]);
-  const tokens30Spark = useMemo(() => sparkFromDaily(allDaily, month30Dates, 'tokens'), [allDaily, month30Dates]);
-
   // Aggregates recomputed over the filtered window so every card/chart/table
   // moves with the global time filter.
   const totals = useMemo(() => {
@@ -411,7 +421,7 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
           label={`${winLabel} Tokens`}
           value={U.compactCN(totals.tokens)}
           sub={`${U.compact(totals.invokes)} 次调用 · ${totals.models} 模型`}
-          sparkValues={tokens30Spark}
+          sparkValues={tokensSpark}
           sparkColor="oklch(0.55 0.16 265)" />
       </div>
 
