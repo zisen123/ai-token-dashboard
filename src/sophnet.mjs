@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { queryOpencodexPerf } from './opencodex-perf.mjs';
 
 const DEFAULT_BASE_URL = 'https://www.sophnet.com/api/open-apis';
 const DEFAULT_DATA_DIR = '/home/yicong.wu/sophnet';
@@ -33,6 +34,10 @@ export async function querySophnet({ force = false } = {}) {
     modelCache
   });
 
+  // Fetch routing-history perf independently: its failure must never block
+  // the main Sophnet payload. Kicked off early so it overlaps with API calls.
+  const perfPromise = queryOpencodexPerf({ force }).catch(() => ({ ok: false, rows: [] }));
+
   const apiKey = resolveApiKey(dataDir);
   if (!apiKey) {
     const payload = {
@@ -40,17 +45,19 @@ export async function querySophnet({ force = false } = {}) {
       ok: false,
       status: 'missing_key',
       error: '未找到 Sophnet API key：设置 SOPHNET_API_KEY 或保留 sophnet/apikey 文件',
-      live: null
+      live: null,
+      perf: await perfPromise
     };
     cache = { until: now + Math.min(ttl, 60_000), data: payload };
     return payload;
   }
 
   try {
-    const [balanceBox, usageBox, modelsBox] = await Promise.all([
+    const [balanceBox, usageBox, modelsBox, perf] = await Promise.all([
       sophnetGet(baseUrl, apiKey, '/projects/balance'),
       sophnetGet(baseUrl, apiKey, '/projects/usage_detail', { beginTime: start, endTime: today }),
-      sophnetGet(baseUrl, apiKey, '/v1/models')
+      sophnetGet(baseUrl, apiKey, '/v1/models'),
+      perfPromise
     ]);
 
     const live = buildLivePayload({ balanceBox, usageBox, modelsBox, start, today });
@@ -61,7 +68,8 @@ export async function querySophnet({ force = false } = {}) {
       error: '',
       generatedAt: new Date().toISOString(),
       live,
-      overview: mergeOverview(localPayload.overview, live.balance)
+      overview: mergeOverview(localPayload.overview, live.balance),
+      perf
     };
     cache = { until: now + ttl, data: payload };
     return payload;
@@ -72,7 +80,8 @@ export async function querySophnet({ force = false } = {}) {
       status: 'api_error',
       error: error.message,
       generatedAt: new Date().toISOString(),
-      live: null
+      live: null,
+      perf: await perfPromise
     };
     cache = { until: now + Math.min(ttl, 60_000), data: payload };
     return payload;
