@@ -40,31 +40,53 @@ function fmtDelta(curr, prev) {
   return `${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%`;
 }
 
-// Match a perf row (opencodex routing record) against a usage model:
-// exact rawModel → exact model → prefix-stripped comparison on both
-// sides, so `anthropic.claude-opus-4-6` still matches rawModel
-// `claude-opus-4-6` (and vice versa).
-const PERF_VENDOR_PREFIXES = ['anthropic.', 'google.'];
-function stripPerfPrefix(name) {
+// Match a perf row (opencodex routing record) against a usage model.
+//
+// Names on the two sides use different conventions, so compare several
+// normalizations in order of confidence:
+//   1. exact rawModel / model (opencodex may log the same string verbatim)
+//   2. normalized: strip the `ChatCompletion-` collection prefix and the
+//      `anthropic.` / `google.` vendor prefixes, drop trailing date-style
+//      alias suffixes (`DeepSeek-V4-Flash-0731` vs `DeepSeek-V4-Flash`),
+//      and compare case-insensitively.
+// perfRows arrive sorted by sample count (descending), so within one tier
+// the first hit is also the better-sampled bucket — e.g. `claude-opus-4-6`
+// prefers the 244-sample `anthropic.claude-opus-4-6` bucket over the
+// 14-sample plain `claude-opus-4-6` one.
+const PERF_VENDOR_PREFIXES = ['chatcompletion-', 'anthropic.', 'google.'];
+// Strip ALL stacked prefixes, not just the first: Sophnet rawModel names
+// like `ChatCompletion-anthropic.claude-opus-4-6` carry two, and a partial
+// strip leaves `anthropic.` behind so the name never meets its perf bucket.
+function stripPerfPrefixes(name) {
   let s = String(name || '');
-  for (const p of PERF_VENDOR_PREFIXES) {
-    if (s.startsWith(p)) return s.slice(p.length);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lower = s.toLowerCase();
+    for (const p of PERF_VENDOR_PREFIXES) {
+      if (lower.startsWith(p)) {
+        s = s.slice(p.length);
+        changed = true;
+        break;
+      }
+    }
   }
   return s;
+}
+function normalizePerfName(name) {
+  return stripPerfPrefixes(name).toLowerCase().replace(/-\d{3,4}$/, '');
 }
 function matchPerf(perfRows, rawModel, model) {
   if (!Array.isArray(perfRows) || !perfRows.length) return null;
   const exactRaw = perfRows.find(p => p && p.model === rawModel);
   if (exactRaw) return exactRaw;
+  const normRaw = normalizePerfName(rawModel);
+  const byNorm = perfRows.find(p => p && normalizePerfName(p.model) === normRaw);
+  if (byNorm) return byNorm;
   const exactModel = perfRows.find(p => p && p.model === model);
   if (exactModel) return exactModel;
-  const strippedRaw = stripPerfPrefix(rawModel);
-  const strippedModel = stripPerfPrefix(model);
-  return perfRows.find(p => {
-    if (!p) return false;
-    const stripped = stripPerfPrefix(p.model);
-    return stripped === strippedRaw || stripped === strippedModel;
-  }) || null;
+  const normModel = normalizePerfName(model);
+  return perfRows.find(p => p && normalizePerfName(p.model) === normModel) || null;
 }
 
 function modelTone(row) {
@@ -664,6 +686,9 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
   // Single formatter for slice values, legend and the center number: ¥ for
   // cost, compact + " tokens" suffix for tokens.
   const fmtValue = metric === 'cost' ? fmtCostCompact : (v) => `${U.compactCN(v)} tokens`;
+  // Legend column is narrow: drop the " tokens" suffix there (the center
+  // number and the panel title already carry the unit).
+  const fmtLegend = metric === 'cost' ? fmtCostCompact : U.compactCN;
   const data = rows.map((v, i) => ({
     name: v.vendor,
     value: Number(v[field]) || 0,
@@ -795,7 +820,7 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
                 onMouseLeave={() => onFocusVendor?.(null)}>
                 <span className="legend-swatch" style={{ background: d.color }} />
                 <span className="legend-name" title={d.name}>{d.name}</span>
-                <span className="legend-val">{fmtValue(d.value)}</span>
+                <span className="legend-val">{fmtLegend(d.value)}</span>
                 <span className="legend-pct">{pct.toFixed(1)}%</span>
               </div>
             );
