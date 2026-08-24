@@ -37,10 +37,30 @@ const PALETTE_FALLBACK = [
   'oklch(0.58 0.14 240)', 'oklch(0.63 0.14 330)', 'oklch(0.68 0.12 220)',
 ];
 
+// Sophnet model vendors → their brand colors. The hex values each brand
+// actually uses, converted to oklch with lightness lifted or capped into
+// the 0.55–0.72 band so they hold up on both light and dark themes.
+// Chinese AI vendors skew heavily blue, so hues are nudged apart while
+// staying on-brand (brand fidelity wins over maximum separation).
+const VENDOR_BRAND_COLORS = {
+  'Anthropic':       'oklch(0.67 0.14 45)',   // Anthropic coral #D97757
+  'OpenAI':          'oklch(0.63 0.13 175)',  // OpenAI teal-green #10A37F
+  'DeepSeek':        'oklch(0.58 0.14 255)',  // DeepSeek whale deep blue
+  'Moonshot Kimi':   'oklch(0.56 0.13 275)',  // Kimi navy with violet lean
+  'Zhipu GLM':       'oklch(0.66 0.14 245)',  // Zhipu bright blue
+  'Alibaba Qwen':    'oklch(0.61 0.15 300)',  // Tongyi purple
+  'ByteDance Doubao':'oklch(0.72 0.11 230)',  // Doubao light blue
+  'MiniMax':         'oklch(0.60 0.12 218)',  // MiniMax blue with cyan lean
+  'Google Gemini':   'oklch(0.66 0.15 260)',  // Google blue #4285F4
+  'Xiaomi MiMo':     'oklch(0.70 0.15 55)',   // Xiaomi orange #FF6900
+  'Claw':            'oklch(0.65 0.11 200)',  // matches the OpenClaw teal
+};
+
 // Deterministic color for any source name (even future ones not in PALETTE)
 function getSourceColor(name) {
   if (!name) return 'var(--muted)';
   if (PALETTE[name]) return PALETTE[name];
+  if (VENDOR_BRAND_COLORS[name]) return VENDOR_BRAND_COLORS[name];
   // Hash the name to pick a consistent fallback color
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
@@ -54,8 +74,9 @@ function getSourceColor(name) {
    on the same screen the same (or perceptually identical) color.
    Instead, assign colors to the whole set at once:
 
-   1. Names with a PALETTE entry keep their brand color; their
-      position in OKLab is marked as occupied.
+   1. Names with a brand color (VENDOR_BRAND_COLORS for model vendors,
+      PALETTE for tools) keep it; their position in OKLab is marked
+      as occupied.
    2. Unknown names are processed in hash order (deterministic)
       and greedily take the pool color that maximizes the minimum
       perceptual distance (OKLab ΔE) to everything already used.
@@ -117,10 +138,12 @@ function getSourceColors(names) {
     if (lab) usedLab.push(lab);
   };
 
-  // 1) brand colors first (their hues become off-limits for auto picks)
+  // 1) brand colors first (their hues become off-limits for auto picks):
+  //    vendor brand colors, then tool PALETTE entries.
   const unknown = [];
   for (const name of unique) {
-    if (PALETTE[name]) put(name, PALETTE[name]);
+    if (VENDOR_BRAND_COLORS[name]) put(name, VENDOR_BRAND_COLORS[name]);
+    else if (PALETTE[name]) put(name, PALETTE[name]);
     else unknown.push(name);
   }
 
