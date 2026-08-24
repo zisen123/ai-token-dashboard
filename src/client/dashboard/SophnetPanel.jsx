@@ -42,6 +42,18 @@ function fmtDelta(curr, prev) {
   return `${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%`;
 }
 
+// Label for the selected window: "最近 N 天" when the window ends today
+// (the default 30-day window reads "最近 30 天"), otherwise the explicit
+// date span, so panels never claim "30 天" under a different filter.
+function windowLabel(startDate, endDate, todayStr) {
+  if (!startDate || !endDate) return '最近 30 天';
+  if (endDate === todayStr) {
+    const n = Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1;
+    if (n > 0) return `最近 ${n} 天`;
+  }
+  return `${startDate.slice(5)} ~ ${endDate.slice(5)}`;
+}
+
 // Match a perf row (opencodex routing record) against a usage model.
 //
 // Names on the two sides use different conventions, so compare several
@@ -203,6 +215,8 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
     return { tokens: acc.tokens, costCny: Math.round(acc.costCny * 10000) / 10000,
              invokes: acc.invokes, days: acc.days.size, models: acc.models.size };
   }, [daily]);
+
+  const winLabel = windowLabel(startDate, endDate, calSpend.todayStr);
 
   const modelTotals = useMemo(() => {
     const map = new Map();
@@ -394,7 +408,7 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
           sparkValues={dayCostSpark}
           sparkColor="oklch(0.62 0.16 20)" />
         <KpiCard
-          label="最近 30 天 Tokens"
+          label={`${winLabel} Tokens`}
           value={U.compactCN(totals.tokens)}
           sub={`${U.compact(totals.invokes)} 次调用 · ${totals.models} 模型`}
           sparkValues={tokens30Spark}
@@ -412,7 +426,7 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
             total={metric === 'cost' ? totals.costCny : totals.tokens}
             colorMap={vendorColorMap}
             focusVendor={focusVendor} onFocusVendor={setFocusVendor}
-            metric={metric} onMetricChange={setMetric} />
+            metric={metric} onMetricChange={setMetric} winLabel={winLabel} />
         </div>
         <div className="col-12">
           <div className="panel">
@@ -525,6 +539,13 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
     for (const r of rows) m.set(r.date, r);
     return m;
   }, [rows]);
+  // Per-vendor per-date rows, so a segment hover can show that vendor's
+  // other metric next to the primary value.
+  const vendorByKey = useMemo(() => {
+    const m = new Map();
+    for (const r of vendorRows) m.set(`${r.date}::${r.vendor}`, r);
+    return m;
+  }, [vendorRows]);
 
   // Vendor × date lookup for the stacked series (same shape as the main
   // TrendChart). Values follow the current metric (every vendorDaily row
@@ -597,6 +618,13 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
         valueSuffix: metricSuffix(metric),
         secondaryOf: (date) => {
           const r = dateMap.get(date);
+          if (!r) return null;
+          return metric === 'cost'
+            ? `${U.compactCN(r.tokens || 0)} tokens`
+            : fmtCny(r.costCny || 0);
+        },
+        segmentSecondaryOf: (date, name) => {
+          const r = vendorByKey.get(`${date}::${name}`);
           if (!r) return null;
           return metric === 'cost'
             ? `${U.compactCN(r.tokens || 0)} tokens`
@@ -682,7 +710,7 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
   );
 }
 
-function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric, onMetricChange }) {
+function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric, onMetricChange, winLabel }) {
   const pal = chartPalette(useTheme().theme);
   const field = metricField(metric);
   // Single formatter for slice values, legend and the center number: ¥ for
@@ -691,6 +719,14 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
   // Legend column is narrow: drop the " tokens" suffix there (the center
   // number and the panel title already carry the unit).
   const fmtLegend = metric === 'cost' ? fmtCostCompact : U.compactCN;
+  // The other metric of the hovered vendor, shown as a muted line in the
+  // slice tooltip (cost mode → that vendor's tokens, tokens mode → cost).
+  const rowByName = new Map(rows.map(r => [r.vendor, r]));
+  const sliceSecondary = (name) => {
+    const r = rowByName.get(name);
+    if (!r) return null;
+    return metric === 'cost' ? `${U.compactCN(r.tokens || 0)} tokens` : fmtCny(r.costCny || 0);
+  };
   const data = rows.map((v, i) => ({
     name: v.vendor,
     value: Number(v[field]) || 0,
@@ -710,9 +746,13 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
       borderWidth: 1,
       textStyle: { color: pal.tooltipText, fontSize: 12 },
       extraCssText: 'pointer-events:none;box-shadow:0 8px 24px rgb(0 0 0 / 0.08);border-radius:8px;',
-      formatter: p => `<div style="font-weight:600;margin-bottom:4px">${p.name}</div>
+      formatter: p => {
+        const sec = sliceSecondary(p.name);
+        return `<div style="font-weight:600;margin-bottom:4px">${p.name}</div>
         <div style="font-size:14px;font-weight:600">${fmtValue(p.value)}</div>
-        <div style="font-size:11px;color:${pal.tooltipMuted}">${(p.percent || 0).toFixed(1)}%</div>`
+        ${sec ? `<div style="font-size:11px;color:${pal.tooltipMuted}">${sec}</div>` : ''}
+        <div style="font-size:11px;color:${pal.tooltipMuted}">${(p.percent || 0).toFixed(1)}%</div>`;
+      }
     },
     series: [{
       type: 'pie',
@@ -788,7 +828,7 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
       <div className="panel-header source-donut-header">
         <div>
           <h2 className="panel-title">{metric === 'cost' ? '供应商费用占比' : '供应商 Tokens 占比'}</h2>
-          <p className="panel-sub source-donut-note" style={{ textAlign: 'left' }}>{metric === 'cost' ? '按最近 30 天费用聚合' : '按最近 30 天 Tokens 聚合'} · 顶部 1 项 {data[0] && sum ? ((data[0].value / sum) * 100).toFixed(0) : 0}%</p>
+          <p className="panel-sub source-donut-note" style={{ textAlign: 'left' }}>{metric === 'cost' ? `按${winLabel}费用聚合` : `按${winLabel} Tokens 聚合`} · 顶部 1 项 {data[0] && sum ? ((data[0].value / sum) * 100).toFixed(0) : 0}%</p>
         </div>
         <div className="panel-tabs">
           {METRIC_TABS.map(m => (
@@ -808,7 +848,7 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric
           }}>
             <div>
               <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>{fmtValue(total)}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>最近 30 天{metric === 'cost' ? '' : ' Tokens'}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{winLabel}{metric === 'cost' ? '' : ' Tokens'}</div>
             </div>
           </div>
         </div>

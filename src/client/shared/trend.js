@@ -152,10 +152,13 @@ function buildTrendSeries(o) {
  * @param {string} [o.valueSuffix]     e.g. ' tokens'
  * @param {(v,date)=>string} [o.fmtCost]
  * @param {(date)=>string|null} [o.secondaryOf] pre-formatted secondary line
+ * @param {(date,name)=>string|null} [o.segmentSecondaryOf] per-source
+ *   secondary line shown on the segment row (e.g. the hovered vendor's
+ *   other metric)
  * @param {string} [o.secondaryLabel] prefix of the segment-mode sub line
  */
 function makeTrendFormatter(o) {
-  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost, secondaryOf, secondaryLabel = '当日费用' } = o;
+  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost, secondaryOf, segmentSecondaryOf, secondaryLabel = '当日费用' } = o;
   const secondary = (date) => {
     if (secondaryOf) return secondaryOf(date) || null;
     const cost = costOf ? (costOf(date) || 0) : null;
@@ -175,9 +178,11 @@ function makeTrendFormatter(o) {
     if (seg && names.includes(seg)) {
       const p = params.find(x => x.seriesName === seg);
       const val = p ? (p.value || 0) : 0;
+      const segSub = segmentSecondaryOf ? segmentSecondaryOf(date, seg) : null;
       html += `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;padding:6px 8px;border-radius:8px;background:rgba(125,125,150,0.12)">
         <span style="width:10px;height:10px;border-radius:3px;background:${p ? p.color : 'transparent'};display:inline-block"></span>
         <span style="color:${pal.tooltipSeries};flex:1;font-weight:600">${seg}</span>
+        ${segSub ? `<span style="color:${pal.tooltipMuted};font-variant-numeric:tabular-nums">${segSub}</span>` : ''}
         <span style="font-weight:600;font-variant-numeric:tabular-nums">${fmtValue(val)}${valueSuffix}</span>
       </div>`;
       const pct = total ? (val / total) * 100 : 0;

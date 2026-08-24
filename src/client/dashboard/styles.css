@@ -1092,6 +1092,20 @@ button, input, select { font-family: inherit; color: inherit; }
   scrollbar-width: thin;
 }
 
+/* Sticky headers while the stability table scrolls. th is opaque
+   (surface-2) so rows never show through. border-collapse must be
+   separate: under collapse the th border-bottom is painted by the
+   table and scrolls away with the rows. */
+.sophnet-block .table-wrap table.dt {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.sophnet-block .table-wrap table.dt thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
 .health-dot {
   display: inline-block;
   width: 8px;
