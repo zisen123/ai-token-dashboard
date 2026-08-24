@@ -45,11 +45,11 @@ const PALETTE_FALLBACK = [
 const VENDOR_BRAND_COLORS = {
   'Anthropic':       'oklch(0.67 0.14 45)',   // Anthropic coral #D97757
   'OpenAI':          'oklch(0.63 0.13 175)',  // OpenAI teal-green #10A37F
-  'DeepSeek':        'oklch(0.58 0.14 255)',  // DeepSeek whale deep blue
+  'DeepSeek':        'oklch(0.50 0.16 265)',  // DeepSeek whale blue, darkened indigo
   'Moonshot Kimi':   'oklch(0.56 0.13 275)',  // Kimi navy with violet lean
-  'Zhipu GLM':       'oklch(0.66 0.14 245)',  // Zhipu bright blue
+  'Zhipu GLM':       'oklch(0.70 0.13 228)',  // Zhipu bright azure, cyan lean
   'Alibaba Qwen':    'oklch(0.61 0.15 300)',  // Tongyi purple
-  'ByteDance Doubao':'oklch(0.72 0.11 230)',  // Doubao light blue
+  'ByteDance Doubao':'oklch(0.76 0.10 205)',  // Doubao pale cyan (clear of GLM)
   'MiniMax':         'oklch(0.60 0.12 218)',  // MiniMax blue with cyan lean
   'Google Gemini':   'oklch(0.66 0.15 260)',  // Google blue #4285F4
   'Xiaomi MiMo':     'oklch(0.70 0.15 55)',   // Xiaomi orange #FF6900
