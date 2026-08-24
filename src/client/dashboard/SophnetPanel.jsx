@@ -26,10 +26,45 @@ function fmtCny(value) {
   return fmtCNY.format(Number(value) || 0);
 }
 
+// Compact spend format for chart axes / tooltips: daily costs are tiny,
+// so keep cents while values stay under ¥1000, then fold into K.
+function fmtCostCompact(v) {
+  const n = Number(v) || 0;
+  if (Math.abs(n) >= 1000) return `¥${U.compact(n)}`;
+  return `¥${n.toFixed(2)}`;
+}
+
 function fmtDelta(curr, prev) {
   const pct = U.deltaPct(curr, prev);
   if (pct == null) return '';
   return `${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%`;
+}
+
+// Match a perf row (opencodex routing record) against a usage model:
+// exact rawModel → exact model → prefix-stripped comparison on both
+// sides, so `anthropic.claude-opus-4-6` still matches rawModel
+// `claude-opus-4-6` (and vice versa).
+const PERF_VENDOR_PREFIXES = ['anthropic.', 'google.'];
+function stripPerfPrefix(name) {
+  let s = String(name || '');
+  for (const p of PERF_VENDOR_PREFIXES) {
+    if (s.startsWith(p)) return s.slice(p.length);
+  }
+  return s;
+}
+function matchPerf(perfRows, rawModel, model) {
+  if (!Array.isArray(perfRows) || !perfRows.length) return null;
+  const exactRaw = perfRows.find(p => p && p.model === rawModel);
+  if (exactRaw) return exactRaw;
+  const exactModel = perfRows.find(p => p && p.model === model);
+  if (exactModel) return exactModel;
+  const strippedRaw = stripPerfPrefix(rawModel);
+  const strippedModel = stripPerfPrefix(model);
+  return perfRows.find(p => {
+    if (!p) return false;
+    const stripped = stripPerfPrefix(p.model);
+    return stripped === strippedRaw || stripped === strippedModel;
+  }) || null;
 }
 
 function modelTone(row) {
@@ -50,10 +85,23 @@ function normalizeTotals(totals) {
   };
 }
 
+// Metric vocabulary shared by the trend chart and the vendor donut:
+// cost (¥, default) vs tokens. One top-level state drives both.
+const METRIC_TABS = [
+  { id: 'cost', label: '花费' },
+  { id: 'tokens', label: 'Tokens' }
+];
+
+const metricField = (metric) => (metric === 'cost' ? 'costCny' : 'tokens');
+const metricFmt = (metric) => (metric === 'cost' ? fmtCostCompact : U.compactCN);
+const metricSuffix = (metric) => (metric === 'cost' ? '' : ' tokens');
+
 function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
   const [tab, setTab] = useState('stability');
   const [query, setQuery] = useState('');
   const [vendorFilter, setVendorFilter] = useState(new Set());
+  // Spend-vs-tokens lens shared by the trend chart and the vendor pie.
+  const [metric, setMetric] = useState('cost');
   // Cross-component vendor focus: hovering a segment / slice / catalog chip
   // sets this, and every chart dims/emphasizes the same vendor so the whole
   // panel reports one shared hover state.
@@ -332,11 +380,15 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
       <div className="grid">
         <div className="col-8 sophnet-trend-cell">
           <SophnetTrendChart rows={dailyByDate} vendorRows={vendorDaily} totals={totals} colorMap={vendorColorMap}
-            focusVendor={focusVendor} onFocusVendor={setFocusVendor} />
+            focusVendor={focusVendor} onFocusVendor={setFocusVendor}
+            metric={metric} onMetricChange={setMetric} />
         </div>
         <div className="col-4">
-          <VendorPanel rows={vendorTotals.slice(0, 8)} total={totals.costCny} colorMap={vendorColorMap}
-            focusVendor={focusVendor} onFocusVendor={setFocusVendor} />
+          <VendorPanel rows={vendorTotals.slice(0, 8)}
+            total={metric === 'cost' ? totals.costCny : totals.tokens}
+            colorMap={vendorColorMap}
+            focusVendor={focusVendor} onFocusVendor={setFocusVendor}
+            metric={metric} onMetricChange={setMetric} />
         </div>
         <div className="col-12">
           <div className="panel">
@@ -359,7 +411,7 @@ function SophnetPanel({ data, loading, error, onRefresh, startDate, endDate }) {
               )}
             </div>
 
-            {tab === 'stability' && <StabilityTable rows={stability} lowSample={lowSample} />}
+            {tab === 'stability' && <StabilityTable rows={stability} lowSample={lowSample} perf={data?.perf} />}
             {tab === 'models' && <UsageModelTable rows={modelTotals} totalCost={totals.costCny} />}
             {tab === 'catalog' && (
               <CatalogView items={filteredModels} vendors={modelCatalog.vendors || []}
@@ -428,7 +480,7 @@ function classifyVendorFallback(model) {
   return 'Other';
 }
 
-function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, onFocusVendor }) {
+function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, onFocusVendor, metric, onMetricChange }) {
   const pal = chartPalette(useTheme().theme);
   const [mode, setMode] = useState('bar');
   // Ref mirror of focusVendor for the tooltip formatter (formatter closures
@@ -440,38 +492,46 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
   const segmentHoverRef = useRef(null);
   // handlers bound once at chart mount read the latest vendor list via ref
   const vendorsRef = useRef([]);
+  const field = metricField(metric);
   const dates = rows.map(r => r.date);
-  const tokens = rows.map(r => r.tokens || 0);
-  const costByDate = useMemo(() => {
+  const values = rows.map(r => r[field] || 0);
+  // Both metrics per date, so the tooltip can always show the other one.
+  const dateMap = useMemo(() => {
     const m = new Map();
-    for (const r of rows) m.set(r.date, r.costCny || 0);
+    for (const r of rows) m.set(r.date, r);
     return m;
   }, [rows]);
 
-  // Vendor × date lookup for the stacked series (same shape as the main TrendChart).
+  // Vendor × date lookup for the stacked series (same shape as the main
+  // TrendChart). Values follow the current metric (every vendorDaily row
+  // carries both tokens and costCny), but the vendor ORDER stays anchored
+  // to the tokens ranking: the EChart wrapper's series fingerprint (type+
+  // name sequence) must not change on a metric switch, otherwise a
+  // replaceMerge replays the grow animation and breaks hover.
   const { vendors, byKey } = useMemo(() => {
-    const totalsByVendor = new Map();
+    const tokensByVendor = new Map();
     for (const r of vendorRows) {
-      totalsByVendor.set(r.vendor, (totalsByVendor.get(r.vendor) || 0) + r.tokens);
+      tokensByVendor.set(r.vendor, (tokensByVendor.get(r.vendor) || 0) + (r.tokens || 0));
     }
-    const vendors = Array.from(totalsByVendor.entries())
+    const vendors = Array.from(tokensByVendor.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name]) => name);
     const byKey = new Map();
-    for (const r of vendorRows) byKey.set(`${r.date}::${r.vendor}`, r.tokens);
+    for (const r of vendorRows) byKey.set(`${r.date}::${r.vendor}`, r[field] || 0);
     vendorsRef.current = vendors;
     return { vendors, byKey };
-  }, [vendorRows]);
+  }, [vendorRows, field]);
 
   const vendorColor = (vendor) => (colorMap && colorMap.get(vendor)) || U.getSourceColor(vendor);
 
-  // Rolling 7-day baseline, same as the main TrendChart's "7 日均线" overlay.
+  // Rolling 7-day baseline over the CURRENT metric, same as the main
+  // TrendChart's "7 日均线" overlay.
   const rolling = (() => {
     const arr = [];
     const win = Math.min(7, Math.max(2, Math.floor(dates.length / 8)));
-    for (let i = 0; i < tokens.length; i++) {
+    for (let i = 0; i < values.length; i++) {
       let sum = 0, count = 0;
-      for (let j = Math.max(0, i - win + 1); j <= i; j++) { sum += tokens[j]; count++; }
+      for (let j = Math.max(0, i - win + 1); j <= i; j++) { sum += values[j]; count++; }
       arr.push(count ? sum / count : 0);
     }
     return arr;
@@ -507,10 +567,18 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
         pal,
         names: vendors,
         segmentRef: segmentHoverRef,
-        costOf: (date) => costByDate.get(date) || 0,
-        fmtValue: U.compactCN,
-        valueSuffix: ' tokens',
-        fmtCost: fmtCny
+        // Primary headline follows the shared metric state; the other metric
+        // rides along as the always-visible secondary line.
+        fmtValue: metricFmt(metric),
+        valueSuffix: metricSuffix(metric),
+        secondaryOf: (date) => {
+          const r = dateMap.get(date);
+          if (!r) return null;
+          return metric === 'cost'
+            ? `${U.compactCN(r.tokens || 0)} tokens`
+            : fmtCny(r.costCny || 0);
+        },
+        secondaryLabel: metric === 'cost' ? '当日 Tokens' : '当日费用'
       })
     },
     legend: { show: false },
@@ -525,7 +593,11 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: pal.axisLabelDim, fontSize: 10.5, formatter: v => U.compact(v) },
+      axisLabel: {
+        color: pal.axisLabelDim,
+        fontSize: 10.5,
+        formatter: metric === 'cost' ? fmtCostCompact : (v => U.compact(v))
+      },
       splitLine: { lineStyle: { color: pal.splitLine } },
       axisLine: { show: false },
       axisTick: { show: false }
@@ -559,12 +631,19 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
     <div className="panel">
       <div className="panel-header">
         <div>
-          <h2 className="panel-title">Sophnet Token 使用趋势</h2>
+          <h2 className="panel-title">{metric === 'cost' ? 'Sophnet 花费趋势' : 'Sophnet Token 使用趋势'}</h2>
           <p className="panel-sub">
             当前周期 <b style={{color:'var(--text)', fontWeight:600}}>{U.compactCN(totals.tokens)}</b> tokens · {dates.length} 天 · {fmtCny(totals.costCny)} · {U.fmt.format(totals.invokes)} 次调用
           </p>
         </div>
         <div className="panel-actions">
+          <div className="panel-tabs">
+            {METRIC_TABS.map(m => (
+              <button key={m.id} className={`tab ${metric === m.id ? 'active' : ''}`} onClick={() => onMetricChange(m.id)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
           <div className="panel-tabs">
             {SOPHNET_TREND_MODES.map(m => (
               <button key={m.id} className={`tab ${mode === m.id ? 'active' : ''}`} onClick={() => setMode(m.id)}>
@@ -579,11 +658,15 @@ function SophnetTrendChart({ rows, vendorRows, totals, colorMap, focusVendor, on
   );
 }
 
-function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
+function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor, metric, onMetricChange }) {
   const pal = chartPalette(useTheme().theme);
+  const field = metricField(metric);
+  // Single formatter for slice values, legend and the center number: ¥ for
+  // cost, compact + " tokens" suffix for tokens.
+  const fmtValue = metric === 'cost' ? fmtCostCompact : (v) => `${U.compactCN(v)} tokens`;
   const data = rows.map((v, i) => ({
     name: v.vendor,
-    value: Number(v.costCny) || 0,
+    value: Number(v[field]) || 0,
     color: (colorMap && colorMap.get(v.vendor)) || U.getSourceColor(v.vendor)
   })).sort((a, b) => b.value - a.value);
   const sum = data.reduce((s, d) => s + d.value, 0);
@@ -601,7 +684,7 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
       textStyle: { color: pal.tooltipText, fontSize: 12 },
       extraCssText: 'pointer-events:none;box-shadow:0 8px 24px rgb(0 0 0 / 0.08);border-radius:8px;',
       formatter: p => `<div style="font-weight:600;margin-bottom:4px">${p.name}</div>
-        <div style="font-size:14px;font-weight:600">${fmtCny(p.value)}</div>
+        <div style="font-size:14px;font-weight:600">${fmtValue(p.value)}</div>
         <div style="font-size:11px;color:${pal.tooltipMuted}">${(p.percent || 0).toFixed(1)}%</div>`
     },
     series: [{
@@ -677,9 +760,16 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
     <div className="panel source-donut-panel">
       <div className="panel-header source-donut-header">
         <div>
-          <h2 className="panel-title">供应商费用占比</h2>
+          <h2 className="panel-title">{metric === 'cost' ? '供应商费用占比' : '供应商 Tokens 占比'}</h2>
+          <p className="panel-sub source-donut-note" style={{ textAlign: 'left' }}>{metric === 'cost' ? '按最近 30 天费用聚合' : '按最近 30 天 Tokens 聚合'} · 顶部 1 项 {data[0] && sum ? ((data[0].value / sum) * 100).toFixed(0) : 0}%</p>
         </div>
-        <p className="panel-sub source-donut-note">按最近 30 天费用聚合 · 顶部 1 项 {data[0] && sum ? ((data[0].value / sum) * 100).toFixed(0) : 0}%</p>
+        <div className="panel-tabs">
+          {METRIC_TABS.map(m => (
+            <button key={m.id} className={`tab ${metric === m.id ? 'active' : ''}`} onClick={() => onMetricChange(m.id)}>
+              {m.label}
+            </button>
+          ))}
+        </div>
       </div>
       {!data.length && <div className="empty">暂无供应商聚合数据</div>}
       <div className="donut-stack">
@@ -690,8 +780,8 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
             pointerEvents: 'none', textAlign: 'center'
           }}>
             <div>
-              <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>{fmtCny(total)}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>最近 30 天</div>
+              <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>{fmtValue(total)}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>最近 30 天{metric === 'cost' ? '' : ' Tokens'}</div>
             </div>
           </div>
         </div>
@@ -705,7 +795,7 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
                 onMouseLeave={() => onFocusVendor?.(null)}>
                 <span className="legend-swatch" style={{ background: d.color }} />
                 <span className="legend-name" title={d.name}>{d.name}</span>
-                <span className="legend-val">{fmtCny(d.value)}</span>
+                <span className="legend-val">{fmtValue(d.value)}</span>
                 <span className="legend-pct">{pct.toFixed(1)}%</span>
               </div>
             );
@@ -716,32 +806,57 @@ function VendorPanel({ rows, total, colorMap, focusVendor, onFocusVendor }) {
   );
 }
 
-function StabilityTable({ rows, lowSample }) {
+// Single tok/s cell value: one decimal, "—" when the perf row is absent
+// or the field is null/undefined (backend not ready yet). A real zero is
+// still rendered as "0.0".
+function fmtTps(value) {
+  if (value == null) return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(1);
+}
+
+function StabilityTable({ rows, lowSample, perf }) {
+  const perfRows = (perf && Array.isArray(perf.rows)) ? perf.rows : [];
+  const perfOk = Boolean(perf && perf.ok);
   return (
     <>
+      {perfOk ? (
+        <p className="panel-sub sophnet-footnote">TTFT/tok/s：近 {perf.windowDays ?? '—'} 天 · opencodex 路由记录</p>
+      ) : (
+        <p className="panel-sub sophnet-footnote">性能数据暂缺</p>
+      )}
       <div className="table-wrap">
         <table className="dt">
           <thead>
             <tr>
-              <th>排名</th><th>模型</th><th>调用</th><th>活跃天</th><th>P50</th><th>P90</th><th>P99</th><th>最差 P99</th><th>尾部比</th><th>稳定分</th>
+              <th>排名</th><th>模型</th><th>调用</th><th>活跃天</th><th>P50</th><th>P90</th><th>P99</th><th>最差 P99</th><th>尾部比</th><th>稳定分</th><th>TTFT</th><th>tok/s</th>
             </tr>
           </thead>
           <tbody>
-            {!rows.length && <tr><td colSpan="10" className="muted" style={{textAlign:'center', padding: 28}}>暂无足够样本的 latency 数据</td></tr>}
-            {rows.slice(0, 6).map((r, i) => (
-              <tr key={r.rawModel || r.model}>
-                <td>{i + 1}</td>
-                <td><span className="mono">{r.model}</span> <span className={`health-dot ${modelTone(r)}`} /></td>
-                <td>{U.fmt.format(r.invokes)}</td>
-                <td>{r.activeDays}</td>
-                <td>{fmtMs(r.p50)}</td>
-                <td>{fmtMs(r.p90)}</td>
-                <td>{fmtMs(r.p99)}</td>
-                <td>{fmtMs(r.worstP99)}</td>
-                <td>{r.tailRatio || '—'}</td>
-                <td><span className="num-strong">{U.fmt.format(r.stabilityScore)}</span></td>
-              </tr>
-            ))}
+            {!rows.length && <tr><td colSpan="12" className="muted" style={{textAlign:'center', padding: 28}}>暂无足够样本的 latency 数据</td></tr>}
+            {rows.slice(0, 6).map((r, i) => {
+              const p = matchPerf(perfRows, r.rawModel, r.model);
+              const ttft = p ? fmtMs(p.ttftP50Ms) : '—';
+              const ttftTitle = p ? `P95 ${fmtMs(p.ttftP95Ms)} · ${p.samples} 次采样` : '';
+              const tps = p ? fmtTps(p.tps) : '—';
+              return (
+                <tr key={r.rawModel || r.model}>
+                  <td>{i + 1}</td>
+                  <td><span className="mono">{r.model}</span> <span className={`health-dot ${modelTone(r)}`} /></td>
+                  <td>{U.fmt.format(r.invokes)}</td>
+                  <td>{r.activeDays}</td>
+                  <td>{fmtMs(r.p50)}</td>
+                  <td>{fmtMs(r.p90)}</td>
+                  <td>{fmtMs(r.p99)}</td>
+                  <td>{fmtMs(r.worstP99)}</td>
+                  <td>{r.tailRatio || '—'}</td>
+                  <td><span className="num-strong">{U.fmt.format(r.stabilityScore)}</span></td>
+                  <td title={ttftTitle || undefined}>{ttft}</td>
+                  <td>{tps}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

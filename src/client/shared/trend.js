@@ -134,25 +134,41 @@ function buildTrendSeries(o) {
  * segmentRef.current holds the source the pointer sits on (set by
  * makeTrendHoverEvents); null → full breakdown for the whole column.
  *
+ * The big headline number uses the primary formatter (fmtValue /
+ * valueSuffix); `secondaryOf` optionally returns a pre-formatted string
+ * for a second, always-shown line (e.g. the other metric of the same
+ * column). Keeping it pre-formatted lets each caller own its units.
+ *
+ * Back-compat: the old {costOf, fmtCost} pair maps to a secondary cost
+ * line, so existing callers (main dashboard) keep the "tokens headline
+ * + cost line" layout untouched.
+ *
  * @param {object} o
  * @param {object} o.pal
  * @param {string[]} o.names
  * @param {{current:string|null}} o.segmentRef
- * @param {(date)=>number|null} [o.costOf] column cost (rendered when given)
+ * @param {(date)=>number|null} [o.costOf] column cost (legacy secondary)
  * @param {(v)=>string} o.fmtValue     value formatter
  * @param {string} [o.valueSuffix]     e.g. ' tokens'
  * @param {(v,date)=>string} [o.fmtCost]
+ * @param {(date)=>string|null} [o.secondaryOf] pre-formatted secondary line
+ * @param {string} [o.secondaryLabel] prefix of the segment-mode sub line
  */
 function makeTrendFormatter(o) {
-  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost } = o;
+  const { pal, names, segmentRef, costOf, fmtValue, valueSuffix = '', fmtCost, secondaryOf, secondaryLabel = '当日费用' } = o;
+  const secondary = (date) => {
+    if (secondaryOf) return secondaryOf(date) || null;
+    const cost = costOf ? (costOf(date) || 0) : null;
+    return cost != null ? fmtCost(cost) : null;
+  };
   return function formatter(params) {
     const date = params[0]?.axisValue || '';
     let total = 0;
     for (const p of params) if (names.includes(p.seriesName)) total += p.value || 0;
-    const cost = costOf ? (costOf(date) || 0) : null;
+    const sub = secondary(date);
     let html = `<div style="font-weight:600;margin-bottom:6px;color:${pal.tooltipLabel};font-size:11.5px;letter-spacing:.04em">${date}</div>`;
     html += `<div style="font-size:16px;font-weight:600;margin-bottom:2px">${fmtValue(total)} <span style="font-size:11px;color:${pal.tooltipMuted};font-weight:500">${valueSuffix.trim()}</span></div>`;
-    if (cost != null) html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${fmtCost(cost)}</div>`;
+    if (sub != null) html += `<div style="font-size:12px;color:${pal.tooltipSeries};margin-bottom:8px">${sub}</div>`;
 
     // Single-source mode: pointer sits on that source's segment.
     const seg = segmentRef.current;
@@ -165,7 +181,7 @@ function makeTrendFormatter(o) {
         <span style="font-weight:600;font-variant-numeric:tabular-nums">${fmtValue(val)}${valueSuffix}</span>
       </div>`;
       const pct = total ? (val / total) * 100 : 0;
-      html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}%${cost != null ? ` · 当日费用 ${fmtCost(cost)}` : ''}</div>`;
+      html += `<div style="font-size:11px;color:${pal.tooltipMuted};margin-top:3px">占当日 ${pct.toFixed(1)}%${sub != null ? ` · ${secondaryLabel} ${sub}` : ''}</div>`;
       return html;
     }
 

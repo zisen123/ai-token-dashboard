@@ -1250,7 +1250,7 @@ button, input, select { font-family: inherit; color: inherit; }
 .panel-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .panel-tabs {
