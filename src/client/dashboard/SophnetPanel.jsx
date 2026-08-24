@@ -26,12 +26,14 @@ function fmtCny(value) {
   return fmtCNY.format(Number(value) || 0);
 }
 
-// Compact spend format for chart axes / tooltips: daily costs are tiny,
-// so keep cents while values stay under ¥1000, then fold into K.
+// Spend format for chart axes / tooltips: full number with thousands
+// separators (no K/M abbreviation), matching the CNY display elsewhere.
+const fmtCostFull = new Intl.NumberFormat('zh-CN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
 function fmtCostCompact(v) {
-  const n = Number(v) || 0;
-  if (Math.abs(n) >= 1000) return `¥${U.compact(n)}`;
-  return `¥${n.toFixed(2)}`;
+  return `¥${fmtCostFull.format(Number(v) || 0)}`;
 }
 
 function fmtDelta(curr, prev) {
@@ -841,9 +843,72 @@ function fmtTps(value) {
   return n.toFixed(1);
 }
 
+// Stability ranking table: all models inside the panel's scrollable
+// table-wrap (no slice), with click-to-sort on every metric column.
+// Rank column = position in the stability-score ranking; it does not change
+// when sorting by another metric, so rows can be traced back to the board.
+const STABILITY_RANK_RANK = Symbol('rank');
+function stabilityColumns(perfRows) {
+  return [
+    { key: STABILITY_RANK_RANK, title: '排名', sortable: false, width: 52 },
+    { key: 'model', title: '模型', defaultDir: 'asc', value: r => r.model },
+    { key: 'invokes', title: '调用', value: r => r.invokes },
+    { key: 'activeDays', title: '活跃天', value: r => r.activeDays },
+    { key: 'p50', title: 'P50', value: r => r.p50 },
+    { key: 'p90', title: 'P90', value: r => r.p90 },
+    { key: 'p99', title: 'P99', value: r => r.p99 },
+    { key: 'worstP99', title: '最差 P99', value: r => r.worstP99 },
+    { key: 'tailRatio', title: '尾部比', value: r => r.tailRatio },
+    { key: 'stabilityScore', title: '稳定分', value: r => r.stabilityScore },
+    { key: 'ttft', title: 'TTFT', value: r => matchPerf(perfRows, r.rawModel, r.model)?.ttftP50Ms ?? Infinity },
+    { key: 'tps', title: 'tok/s', value: r => matchPerf(perfRows, r.rawModel, r.model)?.tps ?? -Infinity }
+  ];
+}
+
 function StabilityTable({ rows, lowSample, perf }) {
   const perfRows = (perf && Array.isArray(perf.rows)) ? perf.rows : [];
   const perfOk = Boolean(perf && perf.ok);
+  // null = natural stability-score order (ranking order).
+  const [sortBy, setSortBy] = useState(null);
+  const columns = useMemo(() => stabilityColumns(perfRows), [perfRows]);
+  const rankByKey = useMemo(() => {
+    const m = new Map();
+    rows.forEach((r, i) => m.set(r.rawModel || r.model, i));
+    return m;
+  }, [rows]);
+  const sorted = useMemo(() => {
+    if (!sortBy) return rows;
+    const col = columns.find(c => c.key === sortBy.key);
+    if (!col) return rows;
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const va = col.value(a), vb = col.value(b);
+      if (typeof va === 'number' && typeof vb === 'number') {
+        if (va !== vb) return sortBy.dir === 'asc' ? va - vb : vb - va;
+      } else if (va !== vb) {
+        return sortBy.dir === 'asc'
+          ? String(va).localeCompare(String(vb))
+          : String(vb).localeCompare(String(va));
+      }
+      // tie → stability ranking keeps the order stable
+      return (rankByKey.get(a.rawModel || a.model) || 0) - (rankByKey.get(b.rawModel || b.model) || 0);
+    });
+    return arr;
+  }, [rows, sortBy, columns, rankByKey]);
+
+  const toggleSort = (key) => {
+    setSortBy(prev => {
+      const col = columns.find(c => c.key === key);
+      if (!col) return prev;
+      const first = col.defaultDir || 'desc';
+      if (prev && prev.key === key) {
+        if (prev.dir === first) return { key, dir: first === 'desc' ? 'asc' : 'desc' };
+        return null;   // third click restores ranking order
+      }
+      return { key, dir: first };
+    });
+  };
+
   return (
     <>
       {perfOk ? (
@@ -855,19 +920,31 @@ function StabilityTable({ rows, lowSample, perf }) {
         <table className="dt">
           <thead>
             <tr>
-              <th>排名</th><th>模型</th><th>调用</th><th>活跃天</th><th>P50</th><th>P90</th><th>P99</th><th>最差 P99</th><th>尾部比</th><th>稳定分</th><th>TTFT</th><th>tok/s</th>
+              {columns.map(c => (
+                <th key={String(c.title)}
+                  style={c.width ? { width: c.width, cursor: 'default' } : undefined}
+                  onClick={c.sortable === false ? undefined : () => toggleSort(c.key)}
+                  className={sortBy && sortBy.key === c.key ? 'sorted' : ''}>
+                  {c.title}
+                  {c.sortable !== false && (
+                    <span className="sort-ind">
+                      {sortBy && sortBy.key === c.key ? (sortBy.dir === 'asc' ? '▲' : '▼') : '▾'}
+                    </span>
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {!rows.length && <tr><td colSpan="12" className="muted" style={{textAlign:'center', padding: 28}}>暂无足够样本的 latency 数据</td></tr>}
-            {rows.slice(0, 6).map((r, i) => {
+            {!sorted.length && <tr><td colSpan="12" className="muted" style={{textAlign:'center', padding: 28}}>暂无足够样本的 latency 数据</td></tr>}
+            {sorted.map(r => {
               const p = matchPerf(perfRows, r.rawModel, r.model);
               const ttft = p ? fmtMs(p.ttftP50Ms) : '—';
               const ttftTitle = p ? `P95 ${fmtMs(p.ttftP95Ms)} · ${p.samples} 次采样` : '';
               const tps = p ? fmtTps(p.tps) : '—';
               return (
                 <tr key={r.rawModel || r.model}>
-                  <td>{i + 1}</td>
+                  <td>{(rankByKey.get(r.rawModel || r.model) ?? 0) + 1}</td>
                   <td><span className="mono">{r.model}</span> <span className={`health-dot ${modelTone(r)}`} /></td>
                   <td>{U.fmt.format(r.invokes)}</td>
                   <td>{r.activeDays}</td>
@@ -885,11 +962,9 @@ function StabilityTable({ rows, lowSample, perf }) {
           </tbody>
         </table>
       </div>
-      {rows.length > 6 && (
-        <p className="panel-sub sophnet-footnote">仅显示前 6 名 · 共 {rows.length} 个模型</p>
-      )}
+      <p className="panel-sub sophnet-footnote">共 {rows.length} 个模型 · 点击列头按指标排序</p>
       {lowSample.length > 0 && (
-        <p className="panel-sub sophnet-footnote">低样本未进主榜：{lowSample.slice(0, 6).map(r => `${r.model}(${r.invokes})`).join('、')}</p>
+        <p className="panel-sub sophnet-footnote">低样本未进主榜：{lowSample.slice(0, 10).map(r => `${r.model}(${r.invokes})`).join('、')}{lowSample.length > 10 ? ` 等 ${lowSample.length} 个` : ''}</p>
       )}
     </>
   );
