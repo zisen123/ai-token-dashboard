@@ -199,16 +199,18 @@ function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collec
 // ───────────────────────────────────────────────────────────────
 // Filter bar
 // ───────────────────────────────────────────────────────────────
-function FilterBar({ f, setF, allSources, allDevices, allModels, availableRange, onExport, quota }) {
-  const RANGES = [
-    { id: 'today', label: '今天', days: 1  },
-    { id: '7d',  label: '7 天',  days: 7  },
-    { id: '14d', label: '14 天', days: 14 },
-    { id: '30d', label: '30 天', days: 30 },
-    { id: '90d', label: '90 天', days: 90 },
-    { id: 'all', label: '全部' }
-  ];
+// Range presets — exported so App can re-anchor the window after midnight
+// with the exact same rules as a manual chip click.
+const RANGES = [
+  { id: 'today', label: '今天', days: 1  },
+  { id: '7d',  label: '7 天',  days: 7  },
+  { id: '14d', label: '14 天', days: 14 },
+  { id: '30d', label: '30 天', days: 30 },
+  { id: '90d', label: '90 天', days: 90 },
+  { id: 'all', label: '全部' }
+];
 
+function FilterBar({ f, setF, allSources, allDevices, allModels, availableRange, onExport, quota }) {
   const setRange = (r) => {
     if (r.id === 'all') {
       setF({
@@ -596,4 +598,4 @@ function KPI({ label, value, sub, delta, dotColor, sparkValues, sparkColor }) {
   );
 }
 
-export { Topbar, FilterBar, KPI, Delta, Spark };
+export { Topbar, FilterBar, KPI, Delta, Spark, RANGES };

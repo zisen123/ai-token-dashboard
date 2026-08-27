@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { U } from '../shared/utils.js';
-import { Topbar, FilterBar, KPI } from './components-top.jsx';
+import { Topbar, FilterBar, KPI, RANGES } from './components-top.jsx';
 import { TrendChart, SourceDonut, TopModels, Gauge, GrowthPanel, Heatmap } from './components-charts.jsx';
 import { TablePanel, DrillDrawer } from './components-tables.jsx';
 import { SophnetPanel } from './SophnetPanel.jsx';
@@ -307,6 +307,36 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, s
   useEffect(() => {
     if (filters.precise) onNeedTime?.();
   }, [filters.precise, onNeedTime]);
+
+  // Roll the time window forward when the calendar day changes. The filter
+  // range is frozen at mount, so a tab left open overnight would keep the
+  // previous day as its end date and silently hide the new day's bars even
+  // though the 60s poll already fetched them. Preset ranges re-anchor to
+  // "today" (same result as clicking the chip); "all" just extends. A
+  // hand-picked custom range is explicit user intent and left untouched.
+  useEffect(() => {
+    const today = M?.today;
+    if (!today || today <= filters.endDate) return;
+    setFilters(f => {
+      const preset = RANGES.find(r => r.days && r.id === f.rangeId);
+      if (preset) {
+        const startDate = U.daysAgo(preset.days - 1);
+        const endDate = U.daysAgo(0);
+        return {
+          ...f,
+          startDate,
+          endDate,
+          precise: false,
+          startDateTime: U.startOfDayLocal(startDate),
+          endDateTime: U.endOfDayLocal(endDate)
+        };
+      }
+      if (f.rangeId === 'all') {
+        return { ...f, endDate: today, endDateTime: U.endOfDayLocal(today) };
+      }
+      return f; // custom — leave as the user picked it
+    });
+  }, [M?.today, setFilters]);
 
   // Build option lists
   const filterBaseRows = filters.precise && M.time.length ? M.time : M.daily;
