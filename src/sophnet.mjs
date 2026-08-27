@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { queryOpencodexPerf } from './opencodex-perf.mjs';
 
@@ -6,6 +6,7 @@ const DEFAULT_BASE_URL = 'https://www.sophnet.com/api/open-apis';
 const DEFAULT_DATA_DIR = '/home/yicong.wu/sophnet';
 const RECENT_DAYS = 30;
 const HTTP_TIMEOUT_MS = 30_000;
+const NEW_MODEL_WINDOW_MS = 24 * 3600 * 1000;
 
 let cache = { until: 0, data: null };
 
@@ -46,6 +47,7 @@ export async function querySophnet({ force = false } = {}) {
       status: 'missing_key',
       error: '未找到 Sophnet API key：设置 SOPHNET_API_KEY 或保留 sophnet/apikey 文件',
       live: null,
+      newModels: fallbackNewModels(dataDir, localPayload.modelCatalog.items, Date.now()),
       perf: await perfPromise
     };
     cache = { until: now + Math.min(ttl, 60_000), data: payload };
@@ -61,6 +63,8 @@ export async function querySophnet({ force = false } = {}) {
     ]);
 
     const live = buildLivePayload({ balanceBox, usageBox, modelsBox, start, today });
+    const nowMs = Date.now();
+    const seen = recordModelsSeen(dataDir, live.models.items, nowMs);
     const payload = {
       ...localPayload,
       ok: true,
@@ -68,6 +72,7 @@ export async function querySophnet({ force = false } = {}) {
       error: '',
       generatedAt: new Date().toISOString(),
       live,
+      newModels: computeNewModels(live.models.items, seen, nowMs),
       overview: mergeOverview(localPayload.overview, live.balance),
       perf
     };
@@ -81,6 +86,7 @@ export async function querySophnet({ force = false } = {}) {
       error: error.message,
       generatedAt: new Date().toISOString(),
       live: null,
+      newModels: fallbackNewModels(dataDir, localPayload.modelCatalog.items, Date.now()),
       perf: await perfPromise
     };
     cache = { until: now + Math.min(ttl, 60_000), data: payload };
@@ -417,6 +423,60 @@ function readJson(path, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function writeJson(path, value) {
+  try {
+    writeFileSync(path, JSON.stringify(value, null, 2));
+    return true;
+  } catch (err) {
+    // A silent failure here would re-announce every model as "new" on every
+    // refresh, so surface it once per write instead of swallowing.
+    console.warn(`[sophnet] failed to persist ${path}: ${err?.message || err}`);
+    return false;
+  }
+}
+
+// Track when each sophnet model id was first observed, persisted next to the
+// other cache files. On the very first run after this ships, every current
+// model is treated as "new" once (option B): the banner announces the whole
+// catalog for 24h and then settles into only flagging genuinely new arrivals.
+function loadModelsSeen(dataDir) {
+  return readJson(resolve(dataDir, '.models_seen.json'), {});
+}
+
+function recordModelsSeen(dataDir, items, nowMs) {
+  const seen = loadModelsSeen(dataDir);
+  let dirty = false;
+  for (const it of items) {
+    if (!it.id) continue;
+    if (!seen[it.id]) {
+      seen[it.id] = new Date(nowMs).toISOString();
+      dirty = true;
+    }
+  }
+  if (dirty) writeJson(resolve(dataDir, '.models_seen.json'), seen);
+  return seen;
+}
+
+function computeNewModels(items, seen, nowMs) {
+  if (!seen || typeof seen !== 'object') return [];
+  return items
+    .filter(it => it.id && seen[it.id])
+    .map(it => ({ id: it.id, vendor: it.vendor, firstSeen: seen[it.id] }))
+    .filter(it => (nowMs - Date.parse(it.firstSeen)) < NEW_MODEL_WINDOW_MS)
+    .sort((a, b) => a.firstSeen.localeCompare(b.firstSeen) || a.id.localeCompare(b.id));
+}
+
+// When the live call fails we still surface models that were recently flagged
+// as new, so the 24h banner expires on schedule instead of flickering off and
+// back on with each transient API error.
+function fallbackNewModels(dataDir, catalogItems, nowMs) {
+  const seen = loadModelsSeen(dataDir);
+  const items = Array.isArray(catalogItems) && catalogItems.length
+    ? catalogItems
+    : Object.keys(seen).map(id => ({ id, vendor: '' }));
+  return computeNewModels(items, seen, nowMs);
 }
 
 function shortModelName(name) {

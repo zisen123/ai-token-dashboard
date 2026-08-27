@@ -147,9 +147,87 @@ function QuotaBars({ quota }) {
 }
 
 // ───────────────────────────────────────────────────────────────
+// New models pill — surfaced for 24h after sophnet flags an id as new
+// ───────────────────────────────────────────────────────────────
+function formatFirstSeen(iso) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Group consecutive same-vendor runs so a 100+-item first-deploy announcement
+// collapses into a handful of vendor buckets instead of a wall of rows.
+function groupByVendor(newModels) {
+  const map = new Map();
+  for (const m of newModels) {
+    const key = m.vendor || 'Other';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(m);
+  }
+  return Array.from(map.entries())
+    .map(([vendor, items]) => ({ vendor, items: items.sort((a, b) => a.id.localeCompare(b.id)) }))
+    .sort((a, b) => b.items.length - a.items.length || a.vendor.localeCompare(b.vendor));
+}
+
+function NewModelsPill({ newModels }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  // Close on click outside, mirroring MultiSelect / QuotaItem behaviour.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  if (!newModels || !newModels.length) return null;
+  const groups = groupByVendor(newModels);
+
+  return (
+    <div className="newmodels-wrap" ref={ref}>
+      <button
+        type="button"
+        className={`newmodels-pill${open ? ' open' : ''}`}
+        onClick={() => setOpen(o => !o)}>
+        <span className="newmodels-dot"></span>
+        <span>新增模型 ·<strong className="newmodels-num">{newModels.length}</strong></span>
+        <span className={`quota-caret${open ? ' open' : ''}`}>›</span>
+      </button>
+      {open && (
+        <div className="newmodels-pop">
+          <div className="newmodels-pop-head">
+            最近 24h 内 Sophnet 上架 {newModels.length} 个模型
+          </div>
+          <div className="newmodels-pop-list">
+            {groups.map(g => (
+              <div key={g.vendor} className="newmodels-group">
+                <div className="newmodels-group-head">
+                  <span className="newmodels-vendor">{g.vendor}</span>
+                  <span className="newmodels-count">{g.items.length}</span>
+                </div>
+                <div className="newmodels-ids">
+                  {g.items.map(it => (
+                    <div key={it.id} className="newmodels-id-row">
+                      <span className="newmodels-id">{it.id}</span>
+                      <span className="newmodels-time">{formatFirstSeen(it.firstSeen)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // Topbar
 // ───────────────────────────────────────────────────────────────
-function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collectStatus }) {
+function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collectStatus, newModels }) {
   return (
     <div className="topbar">
       <div className="topbar-left">
@@ -166,6 +244,7 @@ function Topbar({ lastSync, onRefresh, refreshing, onCollect, collecting, collec
         </div>
       </div>
       <div className="topbar-right">
+        <NewModelsPill newModels={newModels} />
         {collectStatus && (
           <div className={`collect-pill collect-${collectStatus.type}`} title={collectStatus.message}>
             <span className="collect-dot"></span>

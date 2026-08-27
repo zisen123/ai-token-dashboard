@@ -270,6 +270,7 @@ export function App() {
       sophnet={sophnet}
       sophnetLoading={sophnetLoading}
       sophnetError={sophnetError}
+      newModels={sophnet?.newModels || []}
       onRefresh={loadData}
       onCollect={runCollect}
       onRefreshSophnet={refreshSophnet}
@@ -280,7 +281,7 @@ export function App() {
 /* =============================================================
    Dashboard (extracted so App stays clean)
    ============================================================= */
-function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, sophnetLoading, sophnetError, onRefresh, onCollect, onRefreshSophnet, onNeedTime }) {
+function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, sophnetLoading, sophnetError, newModels, onRefresh, onCollect, onRefreshSophnet, onNeedTime }) {
   // ───── Filter state ─────
   const [filters, setFilters] = useState(() => ({
     rangeId: '30d',
@@ -495,7 +496,8 @@ function Dashboard({ M, refreshing, collecting, collectStatus, quota, sophnet, s
         refreshing={refreshing}
         onCollect={onCollect}
         collecting={collecting}
-        collectStatus={collectStatus} />
+        collectStatus={collectStatus}
+        newModels={newModels} />
 
       <FilterBar
         f={filters}
