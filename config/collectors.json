@@ -1,8 +1,8 @@
 {
   "scheduledCollect": {
-    "enabled": false,
+    "enabled": true,
     "intervalSeconds": 300,
-    "runOnStart": false,
+    "runOnStart": true,
     "device": null
   },
   "collectors": {
