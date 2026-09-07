@@ -5,7 +5,7 @@ import hermes from './icons/hermes.svg';
 import gemini from './icons/gemini.svg';
 import opencode from './icons/opencode.svg';
 import openclaw from './icons/openclaw.svg';
-import deepseek from './icons/deepseek.svg';
+import deepseek from './icons/deepseek.png';
 
 const SOURCE_ICON = {
   'Claude Code': claude,
