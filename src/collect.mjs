@@ -13,7 +13,8 @@ const COLLECTORS = [
   { module: './collectors/codex.mjs', label: 'Codex CLI' },
   { module: './collectors/opencode.mjs', label: 'OpenCode' },
   { module: './collectors/gemini.mjs', label: 'Gemini CLI' },
-  { module: './collectors/openclaw.mjs', label: 'OpenClaw' }
+  { module: './collectors/openclaw.mjs', label: 'OpenClaw' },
+  { module: './collectors/dsh.mjs', label: 'DeepSeek Harness' }
 ];
 
 const args = parseArgs(process.argv.slice(2));
@@ -234,7 +235,8 @@ function sourceLabel(client) {
     opencode: 'OpenCode',
     gemini: 'Gemini CLI',
     openclaw: 'OpenClaw',
-    hermes: 'Hermes Agent'
+    hermes: 'Hermes Agent',
+    dsh: 'DeepSeek Harness'
   };
   return labels[client] || client || 'unknown';
 }
