@@ -41,6 +41,11 @@
         "~/.moltbot/agents",
         "~/.moldbot/agents"
       ]
+    },
+    "dsh": {
+      "roots": [
+        "~/.dsh/sessions"
+      ]
     }
   }
 }
