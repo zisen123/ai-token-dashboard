@@ -6,6 +6,7 @@ import gemini from './icons/gemini.svg';
 import opencode from './icons/opencode.svg';
 import openclaw from './icons/openclaw.svg';
 import grok from './icons/grok.svg';
+import deepseek from './icons/deepseek.svg';
 
 const SOURCE_ICON = {
   'Claude Code': claude,
@@ -14,7 +15,8 @@ const SOURCE_ICON = {
   'Gemini CLI': gemini,
   'OpenCode': opencode,
   'OpenClaw': openclaw,
-  'Grok CLI': grok
+  'Grok CLI': grok,
+  'DeepSeek Harness': deepseek
 };
 
 // Some icons have a lot of internal padding / a non-square viewBox and read
